@@ -1,0 +1,23 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is git-ignored — never commit real secrets.
+
+region           = "ap-northeast-2"
+name_prefix      = "sentry-ingest"
+environment      = "dev"
+stage            = "v1"
+
+# MUST be globally unique across all AWS accounts.
+raw_bucket_name  = "sentry-ingest-raw-dev"
+
+# Usage plan throttle/quota (per API key).
+usage_plan_burst_limit = 10
+usage_plan_rate_limit  = 5
+usage_plan_quota       = 1000
+
+# Processor (AI grouping/summarization) — AI is opt-in; leave disabled for
+# deterministic grouping only.
+processor_schedule = "rate(5 minutes)"
+ai_enabled         = false
+# ai_api_key_ssm_path = "/sentry-ingest/ai-key"
+# ai_endpoint         = "https://api.openai.com/v1/chat/completions"
+# ai_model            = "gpt-4o-mini"

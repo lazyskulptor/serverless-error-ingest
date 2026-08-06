@@ -1,0 +1,34 @@
+# Terraform / OpenTofu
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars
+infra/terraform.tfvars
+infra/crash.log
+infra/.tofu/
+
+# Go
+*.exe
+*.test
+*.out
+bin/
+lambda/**/bin/
+lambda/**/bootstrap
+lambda/**/function.zip
+# Go build artifacts named after package dirs (go build ./... in main packages)
+lambda/ingest/ingest
+lambda/query/query
+lambda/processor/processor
+scripts/register/register
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local env / secrets
+.env
+*.env
+.env.*
+credentials.*

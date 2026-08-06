@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  go:
+    name: Go build / vet / test / lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # In-scope (collection path) modules only. lambda/processor (AI
+        # grouping/summarization) is intentionally excluded from CI in this
+        # phase by decision, not oversight — see the hardening plan.
+        module: [lambda/ingest, lambda/query, scripts/register]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race)
+        run: go test -race ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          working-directory: ${{ matrix.module }}
+
+  tofu:
+    name: OpenTofu fmt / validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.x
+
+      - name: Init
+        run: tofu init -backend=false
+
+      - name: Format check
+        run: tofu fmt -check -diff
+
+      - name: Validate
+        run: tofu validate
+
+  integration:
+    name: LocalStack integration tests (real AWS SDK calls)
+    runs-on: ubuntu-latest
+    services:
+      localstack:
+        image: localstack/localstack:3
+        ports:
+          - "4566:4566"
+        env:
+          SERVICES: s3,dynamodb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Ingest integration
+        working-directory: lambda/ingest
+        run: go test -tags=integration -race ./...
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: ap-northeast-2
+      - name: Query integration
+        working-directory: lambda/query
+        run: go test -tags=integration -race ./...
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: ap-northeast-2
+
+  verify-zips:
+    name: Lambda artifacts build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Build ingest bootstrap
+        working-directory: lambda/ingest
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap .
+          zip -q -X function.zip bootstrap
+      - name: Build query bootstrap
+        working-directory: lambda/query
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap .
+          zip -q -X function.zip bootstrap

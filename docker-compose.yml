@@ -1,0 +1,16 @@
+# Local development environment for integration tests against the real
+# AWS SDK v2 call shapes (S3 + DynamoDB) without any AWS account.
+#
+#   docker compose up -d localstack
+#   cd lambda/ingest && go test -tags=integration ./...
+#   cd lambda/query  && go test -tags=integration ./...
+#
+# CI runs the same tests via the `integration` job in .github/workflows/ci.yml.
+services:
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3,dynamodb
+      DEBUG: "0"

@@ -1,0 +1,21 @@
+# golangci-lint v2 configuration shared by all Go modules.
+# Keep the enabled set small and deterministic for CI.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  exclusions:
+    rules:
+      # Deferred resource Close calls are idiomatic; errcheck noise only.
+      - linters:
+          - errcheck
+        source: "defer .*\\.Close\\(\\)"

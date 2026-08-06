@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Serverless Sentry Ingest — Browser SDK compatibility proof</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
+    pre  { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+    button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+    .ok { color: #1a7f37; }
+    .err { color: #cf222e; }
+  </style>
+</head>
+<body>
+  <h1>@sentry/browser → serverless-sentry-ingest</h1>
+  <p>
+    This page initializes a <strong>stock</strong> <code>@sentry/browser</code> bundle with
+    <em>only a DSN change</em> and captures an exception. Open DevTools → Network to confirm
+    the request hits your API Gateway and returns <code>200 {"id": "..."}</code>.
+  </p>
+
+  <!--
+    DSN mapping (see docs/COMPATIBILITY.md §1):
+      DSN = '{PROTOCOL}://{PUBLIC_KEY}@{HOST}{PATH}/{PROJECT_ID}'
+      ENDPOINT = '{BASE_URI}/api/{PROJECT_ID}/envelope/'
+
+    Replace the two values below with what scripts/register printed:
+      PUBLIC_KEY = the public_key value
+      HOST       = your API Gateway host, e.g. abc123.execute-api.ap-northeast-2.amazonaws.com
+                   (if you deployed to a non-root stage, append the stage path to HOST)
+      PROJECT_ID = the project id you registered
+  -->
+  <script>
+    window.__SENTRY_DSN__ = "https://<public-key>@<api-gateway-host>/<project-id>";
+    window.__SENTRY_HOST__ = "<api-gateway-host>";
+    window.__SENTRY_PROJECT_ID__ = "<project-id>";
+  </script>
+
+  <!-- Stock @sentry/browser bundle from the official CDN. -->
+  <script src="https://browser.sentry-cdn.com/7.119.2/bundle.min.js" crossorigin="anonymous"></script>
+
+  <script>
+    Sentry.init({
+      dsn: window.__SENTRY_DSN__,
+      tracesSampleRate: 0,
+      // Uncomment only if your gateway is not reachable from a default origin:
+      // tunnel: undefined,
+    });
+
+    function triggerException() {
+      try {
+        throw new Error("compat-test: intentional exception from examples/browser");
+      } catch (err) {
+        Sentry.captureException(err);
+      }
+    }
+
+    function fetchEnvelopeForDiagnostics() {
+      // Optional: hit the store endpoint directly with curl-style fetch so you
+      // can verify the exact response contract without waiting for the SDK.
+      fetch("https://" + window.__SENTRY_HOST__ + "/api/" + window.__SENTRY_PROJECT_ID__ + "/store/", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ event_id: "diag-" + Date.now(), message: "diag" })
+      }).then(function (r) {
+        return r.json().then(function (j) {
+          document.getElementById("diag").textContent = "store endpoint: " + r.status + " " + JSON.stringify(j);
+        });
+      }).catch(function (e) {
+        document.getElementById("diag").textContent = "diag failed: " + e;
+      });
+    }
+  </script>
+
+  <p>
+    <button onclick="triggerException()">Trigger captured exception</button>
+    <button onclick="fetchEnvelopeForDiagnostics()">Diagnose store endpoint</button>
+  </p>
+
+  <p id="diag"></p>
+
+  <h2>What to check</h2>
+  <ul>
+    <li>Network tab: POST to <code>/api/&lt;project-id&gt;/envelope/</code> with status <code>200</code> and body <code>{"id": "..."}</code> (not 202).</li>
+    <li>One row in DynamoDB <code>sentry-ingest-events</code> (item_type <code>event</code>).</li>
+    <li>Objects in S3 <code>&lt;bucket&gt;/projects/&lt;project-id&gt;/&lt;date&gt;/&lt;event-id&gt;.envelope</code>.</li>
+  </ul>
+
+  <h2>Recorded verification</h2>
+  <p>
+    Compat proof recorded after a live deploy (fill in when verified):
+  </p>
+  <pre id="verification">@sentry/browser version: 7.119.2 (bundle.min.js)
+status: 200, body: {"id": "..."} (pending live verification)
+</pre>
+</body>
+</html>
