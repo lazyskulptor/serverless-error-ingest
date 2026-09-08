@@ -53,6 +53,24 @@ run "direct_api_without_custom_domain" {
     condition     = keys(aws_api_gateway_method.main) == ["envelope", "store"]
     error_message = "Only POST ingest methods may be deployed."
   }
+
+  assert {
+    condition     = aws_s3_bucket.raw.force_destroy && !aws_dynamodb_table.projects.deletion_protection_enabled && !aws_dynamodb_table.events.deletion_protection_enabled
+    error_message = "Development defaults must permit complete data destruction."
+  }
+}
+
+run "production_data_protection" {
+  command = plan
+
+  variables {
+    allow_destroy_data = false
+  }
+
+  assert {
+    condition     = !aws_s3_bucket.raw.force_destroy && aws_dynamodb_table.projects.deletion_protection_enabled && aws_dynamodb_table.events.deletion_protection_enabled
+    error_message = "Disabling data destruction must protect S3 and both DynamoDB tables."
+  }
 }
 
 run "aws_dns_branch" {

@@ -132,6 +132,7 @@ jobs:
           TF_VAR_raw_standard_ia_days: ${{ vars.RAW_STANDARD_IA_DAYS }}
           TF_VAR_raw_expiration_days: ${{ vars.RAW_EXPIRATION_DAYS }}
           TF_VAR_event_ttl_days: ${{ vars.EVENT_TTL_DAYS }}
+          TF_VAR_allow_destroy_data: ${{ vars.ALLOW_DESTROY_DATA }}
           TF_VAR_alarm_sns_topic_arn: ${{ vars.ALARM_SNS_TOPIC_ARN }}
         run: |
           set -euo pipefail

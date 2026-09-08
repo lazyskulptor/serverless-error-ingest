@@ -5,6 +5,9 @@ name_prefix = "sentry-ingest"
 environment = "production"
 stage       = "v1"
 
+# REQUIRED FOR PRODUCTION: protects S3 archives and DynamoDB tables from destroy.
+allow_destroy_data = false
+
 # Replace with a globally unique bucket name before deployment.
 raw_bucket_name = "REPLACE-WITH-GLOBALLY-UNIQUE-BUCKET"
 

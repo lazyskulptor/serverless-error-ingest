@@ -65,8 +65,9 @@ locals {
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "raw" {
-  bucket = var.raw_bucket_name
-  tags   = local.common_tags
+  bucket        = var.raw_bucket_name
+  force_destroy = var.allow_destroy_data
+  tags          = local.common_tags
 }
 
 resource "aws_s3_bucket_versioning" "raw" {
@@ -120,9 +121,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "raw" {
 # ---------------------------------------------------------------------------
 
 resource "aws_dynamodb_table" "projects" {
-  name         = "${local.name_prefix}-projects"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "project_id"
+  name                        = "${local.name_prefix}-projects"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "project_id"
+  deletion_protection_enabled = !var.allow_destroy_data
 
   attribute {
     name = "project_id"
@@ -133,10 +135,11 @@ resource "aws_dynamodb_table" "projects" {
 }
 
 resource "aws_dynamodb_table" "events" {
-  name         = "${local.name_prefix}-events"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "project_id"
-  range_key    = "event_id"
+  name                        = "${local.name_prefix}-events"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "project_id"
+  range_key                   = "event_id"
+  deletion_protection_enabled = !var.allow_destroy_data
 
   attribute {
     name = "project_id"

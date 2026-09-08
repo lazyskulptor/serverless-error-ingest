@@ -78,6 +78,9 @@ docs/               COMPATIBILITY.md, ARCHITECTURE.md, QUERY.md, REGISTRATION.md
    (`dns_provider = "aws"`) or Cloudflare (`dns_provider = "cloudflare"`). Run
    `tofu init && tofu plan && tofu apply`. Cloudflare credentials come from
    `CLOUDFLARE_API_TOKEN`, never from tfvars.
+   `allow_destroy_data` defaults to `true` for clean development teardown.
+   **Production must set it to `false` before the first apply** or destroy will
+   permanently remove archived events and tables.
 3. **Register a project**: `cd scripts/register && go run . -project <name>
    -host <api-host>`
    (creates a `projects` table row + DSN public key). See `docs/REGISTRATION.md`.

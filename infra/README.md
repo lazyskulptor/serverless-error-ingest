@@ -11,7 +11,8 @@ Requirements: Go 1.24+, `zip`, OpenTofu 1.6+, AWS CLI, and AWS credentials.
 ./scripts/build-lambdas.sh
 cd infra
 cp terraform.tfvars.example terraform.tfvars
-# Set a globally unique raw_bucket_name.
+# Set a globally unique raw_bucket_name. Production must also set
+# allow_destroy_data=false before the first apply.
 tofu init
 tofu plan
 tofu apply
@@ -63,8 +64,12 @@ Required variables:
 - `RAW_BUCKET_NAME`
 
 Optional variables mirror `variables.tf`: `DEPLOY_ENVIRONMENT`, `NAME_PREFIX`,
-`API_STAGE`, DNS values, retention values, WAF limit, and alarm topic.
+`API_STAGE`, DNS values, retention values, WAF limit, alarm topic, and
+`ALLOW_DESTROY_DATA`.
 Cloudflare needs `CLOUDFLARE_API_TOKEN`.
+
+`ALLOW_DESTROY_DATA` defaults to true through OpenTofu. **Every production
+GitHub environment must set it to `false` before its first deployment.**
 
 CI validates source and uploads `lambda-<commit-sha>` for 30 days. A published
 Release deploys only the first successful push CI artifact for its exact SHA,
@@ -100,5 +105,16 @@ API Gateway account logging is account/region-wide and must have one owner.
 Always review the next plan. Never delete the raw bucket or event tables as a
 generic fix.
 
+## Destroy
+
+The development default, `allow_destroy_data = true`, makes `tofu destroy`
+delete versioned S3 objects and both DynamoDB tables with the remaining runtime
+resources. The separately bootstrapped GitHub OIDC provider and apply role are
+not part of this state and require a separate destroy if they are not shared.
+
+**Production must set `allow_destroy_data = false` before its first apply.** A
+later configuration change cannot restore data after destroy has started.
+
 Rollback by reverting through review and publishing a new Release. During DNS
-incidents use `api_gateway_url`; do not rerun project registration.
+incidents use `api_gateway_url`; do not rerun project registration. In
+production, keep `allow_destroy_data = false` during recovery and rollback.
