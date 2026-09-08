@@ -68,7 +68,7 @@ jobs:
           key: tofu-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
           restore-keys: tofu-${{ runner.os }}-
 
-      - name: Resolve successful CI artifact
+      - name: Find CI artifact
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,25 +78,21 @@ jobs:
           run_id=$(gh api --paginate \
             "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE_SHA&status=success&event=push&per_page=100" \
             --jq '[.workflow_runs[] | select(.run_attempt == 1)] | sort_by(.created_at) | first | .id')
-          if [[ -z "$run_id" || "$run_id" = null ]]; then
-            echo "No successful push CI run found for $RELEASE_SHA; rerun CI or release a fresh reviewed commit." >&2
-            exit 1
-          fi
+          test -n "$run_id" && test "$run_id" != null || {
+            echo "No CI artifact for $RELEASE_SHA" >&2; exit 1;
+          }
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
 
-      - name: Download verified Lambda artifact
+      - name: Download Lambda artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           rm -f lambda/ingest/function.zip lambda/ingest/function.zip.sha256
-          if ! gh run download "${{ steps.ci.outputs.run_id }}" \
+          gh run download "${{ steps.ci.outputs.run_id }}" \
             --repo "$GITHUB_REPOSITORY" \
             --name "lambda-${{ steps.release.outputs.sha }}" \
-            --dir .; then
-            echo "The exact-SHA Lambda artifact is missing or expired; rerun CI or release a fresh reviewed commit." >&2
-            exit 1
-          fi
+            --dir .
           sha256sum --check lambda/ingest/function.zip.sha256
 
       - uses: aws-actions/configure-aws-credentials@v4
@@ -160,10 +156,3 @@ jobs:
           SMOKE_PROJECT_ID: ${{ secrets.SMOKE_PROJECT_ID }}
           SMOKE_PUBLIC_KEY: ${{ secrets.SMOKE_PUBLIC_KEY }}
         run: ./scripts/smoke-ingest.sh
-
-      - name: Deployment summary
-        run: |
-          echo "## Error ingest release deployed" >> "$GITHUB_STEP_SUMMARY"
-          echo "Release: ${{ steps.release.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Commit: ${{ steps.release.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Endpoint: ${{ steps.outputs.outputs.public_base_url }}" >> "$GITHUB_STEP_SUMMARY"

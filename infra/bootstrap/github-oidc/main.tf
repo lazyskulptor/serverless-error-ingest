@@ -20,26 +20,6 @@ resource "aws_iam_openid_connect_provider" "github" {
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
 }
 
-data "aws_iam_policy_document" "plan_trust" {
-  statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-    condition {
-      test     = "StringLike"
-      variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:pull_request"]
-    }
-  }
-}
-
 data "aws_iam_policy_document" "apply_trust" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -58,11 +38,6 @@ data "aws_iam_policy_document" "apply_trust" {
       values   = ["repo:${var.github_repository}:environment:${var.github_environment}"]
     }
   }
-}
-
-resource "aws_iam_role" "plan" {
-  name               = "${var.resource_name_prefix}-github-plan"
-  assume_role_policy = data.aws_iam_policy_document.plan_trust.json
 }
 
 resource "aws_iam_role" "apply" {
@@ -87,20 +62,6 @@ data "aws_iam_policy_document" "state" {
       "dynamodb:DeleteItem"
     ]
     resources = ["arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.state_lock_table}"]
-  }
-}
-
-data "aws_iam_policy_document" "runtime_read" {
-  statement {
-    actions = [
-      "acm:DescribeCertificate", "acm:ListCertificates", "apigateway:GET",
-      "cloudwatch:DescribeAlarms", "dynamodb:DescribeTable", "dynamodb:ListTagsOfResource",
-      "iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies",
-      "lambda:GetFunction", "lambda:GetPolicy", "logs:DescribeLogGroups", "s3:GetBucket*",
-      "s3:ListBucket", "wafv2:GetWebACL", "wafv2:GetWebACLForResource", "wafv2:ListTagsForResource",
-      "route53:GetHostedZone", "route53:ListResourceRecordSets"
-    ]
-    resources = ["*"]
   }
 }
 
@@ -130,11 +91,6 @@ data "aws_iam_policy_document" "runtime_apply" {
       resources = [statement.value]
     }
   }
-}
-
-resource "aws_iam_role_policy" "plan" {
-  role   = aws_iam_role.plan.id
-  policy = jsonencode({ Version = "2012-10-17", Statement = concat(jsondecode(data.aws_iam_policy_document.state.json).Statement, jsondecode(data.aws_iam_policy_document.runtime_read.json).Statement) })
 }
 
 resource "aws_iam_role_policy" "apply" {

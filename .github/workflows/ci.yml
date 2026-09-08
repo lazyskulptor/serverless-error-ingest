@@ -45,7 +45,7 @@ jobs:
           working-directory: ${{ matrix.module }}
 
   tofu:
-    name: OpenTofu fmt / validate
+    name: OpenTofu
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -70,10 +70,6 @@ jobs:
           go-version: "1.24.x"
           cache-dependency-path: lambda/ingest/go.sum
 
-      - name: Build Lambda artifacts
-        working-directory: .
-        run: ./scripts/build-lambdas.sh
-
       - name: Init
         run: tofu init -backend=false
 
@@ -83,11 +79,11 @@ jobs:
       - name: Validate
         run: tofu validate
 
-      - name: Test DNS provider branches
+      - name: Test
         run: tofu test
 
   integration:
-    name: LocalStack integration tests (real AWS SDK calls)
+    name: LocalStack integration
     runs-on: ubuntu-latest
     services:
       localstack:
@@ -119,9 +115,9 @@ jobs:
           go-version: "1.24.x"
       - name: Build deployable Lambda artifact
         run: ./scripts/build-lambdas.sh
-      - name: Verify artifacts
+      - name: Package
         run: |
-          test -f lambda/ingest/function.zip
+          ./scripts/build-lambdas.sh
           sha256sum lambda/ingest/function.zip > lambda/ingest/function.zip.sha256
       - name: Upload deployment artifact
         if: github.event_name == 'push'
