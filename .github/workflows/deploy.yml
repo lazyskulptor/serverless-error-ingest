@@ -1,0 +1,203 @@
+name: Deploy production
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: serverless-error-ingest-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  plan-pr:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.x
+          tofu_wrapper: false
+      - run: ./scripts/build-lambdas.sh
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          role-session-name: error-ingest-plan-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "${{ vars.AWS_ACCOUNT_ID }}"
+      - name: Initialize remote state
+        working-directory: infra
+        run: >-
+          tofu init -reconfigure
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=${{ vars.TF_STATE_KEY }}"
+          -backend-config="region=${{ vars.AWS_REGION }}"
+          -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+          -backend-config="encrypt=true"
+      - name: Validate and plan
+        working-directory: infra
+        shell: bash
+        env:
+          TF_VAR_raw_bucket_name: ${{ vars.RAW_BUCKET_NAME }}
+          TF_VAR_region: ${{ vars.AWS_REGION }}
+          TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+          TF_VAR_dns_provider: ${{ vars.DNS_PROVIDER }}
+          TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+          TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          tofu fmt -check -diff -recursive
+          tofu validate
+          tofu test
+          tofu plan -no-color -lock-timeout=5m -var-file=production.tfvars.example | tee plan.log
+          {
+            echo '## OpenTofu production plan'
+            echo '```text'
+            tail -n 80 plan.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  plan-production:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.x
+          tofu_wrapper: false
+      - run: ./scripts/build-lambdas.sh
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          role-session-name: error-ingest-apply-plan-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "${{ vars.AWS_ACCOUNT_ID }}"
+      - name: Initialize remote state
+        working-directory: infra
+        run: >-
+          tofu init -reconfigure
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=${{ vars.TF_STATE_KEY }}"
+          -backend-config="region=${{ vars.AWS_REGION }}"
+          -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+          -backend-config="encrypt=true"
+      - name: Create saved plan
+        working-directory: infra
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_raw_bucket_name: ${{ vars.RAW_BUCKET_NAME }}
+          TF_VAR_region: ${{ vars.AWS_REGION }}
+          TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+          TF_VAR_dns_provider: ${{ vars.DNS_PROVIDER }}
+          TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+          TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          tofu fmt -check -diff -recursive
+          tofu validate
+          tofu test
+          tofu plan -no-color -lock-timeout=5m -var-file=production.tfvars.example -out=tfplan | tee plan.log
+          {
+            echo '## Production deployment plan'
+            echo "Commit: $GITHUB_SHA"
+            echo "Region: $AWS_REGION"
+            echo '```text'
+            tail -n 80 plan.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-tfplan-${{ github.sha }}
+          path: |
+            infra/tfplan
+            lambda/ingest/function.zip
+          retention-days: 1
+
+  apply-production:
+    needs: plan-production
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.x
+          tofu_wrapper: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: production-tfplan-${{ github.sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          role-session-name: error-ingest-apply-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "${{ vars.AWS_ACCOUNT_ID }}"
+      - name: Initialize and apply saved plan
+        working-directory: infra
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          tofu init -reconfigure \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+          tofu apply -auto-approve tfplan
+      - name: Verify POST persistence
+        env:
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+          RAW_BUCKET: ${{ vars.RAW_BUCKET_NAME }}
+          EVENTS_TABLE: ${{ vars.EVENTS_TABLE }}
+          SMOKE_PROJECT_ID: ${{ secrets.SMOKE_PROJECT_ID }}
+          SMOKE_PUBLIC_KEY: ${{ secrets.SMOKE_PUBLIC_KEY }}
+        run: ./scripts/smoke-ingest.sh
+      - name: Deployment summary
+        run: |
+          echo "## Production deployment succeeded" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Region: $AWS_REGION" >> "$GITHUB_STEP_SUMMARY"
+          echo "POST/S3/DynamoDB smoke: passed" >> "$GITHUB_STEP_SUMMARY"

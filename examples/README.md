@@ -58,3 +58,7 @@ Sentry.init({
 | SDK | Version | Result |
 |---|---|---|
 | `@sentry/browser` (CDN bundle) | 7.119.2 | pending live verification |
+
+The production workflow also runs `scripts/smoke-ingest.sh` with a dedicated,
+pre-registered project. It does not rotate the project key and requires HTTP
+200 plus matching S3 envelope and DynamoDB metadata before deployment succeeds.

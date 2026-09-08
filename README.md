@@ -75,6 +75,11 @@ docs/               COMPATIBILITY.md, ARCHITECTURE.md, QUERY.md, REGISTRATION.md
 2. **Infrastructure**: `cd infra`, copy `terraform.tfvars.example` to
    `terraform.tfvars`, choose either Route 53 (`dns_provider = "aws"`) or
    Cloudflare (`dns_provider = "cloudflare"`), then run
+
+For automated production deployment, bootstrap the GitHub OIDC roles under
+`infra/bootstrap/github-oidc` and configure the protected `production`
+environment described in `infra/README.md`. Pull requests plan only; merges to
+`master` apply the reviewed saved plan and run POST/S3/DynamoDB smoke checks.
    `tofu init && tofu plan && tofu apply`. Leave `domain_name` empty to use the
    direct API Gateway URL. Cloudflare credentials come from
    `CLOUDFLARE_API_TOKEN`, never from the tfvars file.

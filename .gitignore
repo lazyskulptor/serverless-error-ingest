@@ -5,7 +5,11 @@ infra/*.tfstate.*
 infra/*.tfvars
 infra/terraform.tfvars
 infra/crash.log
+infra/tfplan
+infra/*.tfplan
+infra/plan.log
 infra/.tofu/
+infra/**/.terraform/
 
 # Go
 *.exe

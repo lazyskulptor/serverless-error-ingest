@@ -171,3 +171,40 @@ go run . -project my-app -region ap-northeast-2
 ```
 
 See `docs/REGISTRATION.md` for the full DSN format handed to clients.
+
+## GitHub Actions deployment
+
+The `Deploy production` workflow uses GitHub OIDC; never configure repository
+AWS access-key secrets. Bootstrap the roles once from
+`infra/bootstrap/github-oidc`, then create a protected GitHub environment named
+`production` with required reviewers.
+
+Configure these repository/environment variables:
+
+- `AWS_REGION`, `AWS_ACCOUNT_ID`
+- `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN`
+- `TF_STATE_BUCKET`, `TF_STATE_LOCK_TABLE`, `TF_STATE_KEY`
+- `RAW_BUCKET_NAME`, `EVENTS_TABLE`, `PUBLIC_BASE_URL`
+- `DOMAIN_NAME`, `DNS_PROVIDER`, `ROUTE53_ZONE_ID`, `CLOUDFLARE_ZONE_ID`
+
+For Cloudflare DNS, add protected environment secret
+`CLOUDFLARE_API_TOKEN`; it is never exposed to pull requests. Add protected
+secrets `SMOKE_PROJECT_ID` and `SMOKE_PUBLIC_KEY` after registering a dedicated
+smoke project once. Registration is deliberately not part of deployment because
+it generates a new key.
+
+Same-repository pull requests assume the plan-only role and plan against remote
+state. Fork pull requests receive only the offline CI checks. A `master` push or
+manual dispatch waits for environment approval, creates a saved plan, applies
+that exact artifact, and verifies POST, S3, and DynamoDB persistence.
+
+Require the CI and deploy-plan checks in branch protection. Workflow
+concurrency and the DynamoDB state lock prevent overlapping applies.
+
+### Rollback
+
+Revert the offending commit through a reviewed pull request and let the workflow
+apply its saved rollback plan. Do not rerun project registration. During a DNS
+incident, use the retained `api_gateway_url`. If apply fails, inspect the remote
+state and AWS resources before retrying; never delete the raw S3 bucket or event
+tables as a generic recovery step.

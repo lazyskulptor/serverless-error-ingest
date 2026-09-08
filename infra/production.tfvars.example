@@ -1,0 +1,27 @@
+# Non-secret production defaults. Account-specific values may instead be set
+# through GitHub environment TF_VAR_* variables.
+region      = "ap-northeast-2"
+name_prefix = "sentry-ingest"
+environment = "production"
+stage       = "v1"
+
+# Replace with a globally unique bucket name before deployment.
+raw_bucket_name = "REPLACE-WITH-GLOBALLY-UNIQUE-BUCKET"
+
+# Leave domain_name empty for the direct API Gateway endpoint.
+domain_name = ""
+dns_provider = "aws"
+route53_zone_id = ""
+cloudflare_zone_id = ""
+cloudflare_proxied = false
+
+waf_rate_limit        = 2000
+raw_standard_ia_days  = 30
+raw_expiration_days   = 180
+event_ttl_days        = 90
+
+# Existing topic ARN, or empty to create alarms without notifications.
+alarm_sns_topic_arn                  = ""
+s3_object_count_alarm_threshold      = 100000
+s3_bucket_size_alarm_bytes           = 5368709120
+api_hourly_request_alarm_threshold   = 10000
