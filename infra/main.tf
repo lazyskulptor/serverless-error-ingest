@@ -691,11 +691,19 @@ resource "aws_iam_role_policy" "api_gw_logs" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "api_gw_logs" {
+  role       = aws_iam_role.api_gw_logs.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
 # Account-level CloudWatch role for API Gateway logging (one per account).
 resource "aws_api_gateway_account" "main" {
   cloudwatch_role_arn = aws_iam_role.api_gw_logs.arn
 
-  depends_on = [aws_iam_role_policy.api_gw_logs]
+  depends_on = [
+    aws_iam_role_policy.api_gw_logs,
+    aws_iam_role_policy_attachment.api_gw_logs,
+  ]
 }
 
 # --- CloudWatch alarms ---
