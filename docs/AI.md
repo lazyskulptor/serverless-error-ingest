@@ -1,5 +1,9 @@
 # AI Grouping / Summarization (optional MVP)
 
+> Deployment status: historical/experimental source only. The production
+> OpenTofu stack creates no processor, EventBridge schedule, SSM lookup, or AI
+> credential environment variable.
+
 Post-ingest pipeline that batches new events, groups similar crashes into one
 issue, and writes a short summary back to the DynamoDB metadata. Grouping is
 **deterministic and offline**; AI summarization is an opt-in enhancement.

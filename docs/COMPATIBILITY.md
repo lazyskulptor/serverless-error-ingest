@@ -188,12 +188,11 @@ above — §1–§9 remain authoritative):
   stable id from a hash of the raw body, so identical retries do not create
   duplicates.
 - **Rate limiting layers**: WAFv2 rate-based rule (global, per source IP) +
-  API Gateway usage plan (keyed clients) + in-Lambda token bucket (per DSN
+  WAF IP rate limit + in-Lambda token bucket (per DSN
   key) — `429` + `Retry-After` behavior unchanged.
-- **Observability**: structured JSON logs (ids/counts only), X-Ray tracing,
+- **Observability**: structured JSON logs (ids/counts only),
   API Gateway access logs (metadata only), CloudWatch alarms.
 - **Cost control**: S3 lifecycle (STANDARD_IA then expiry) and DynamoDB TTL on
   metadata rows.
 - **Query default**: `GET /events` lists `event` rows by default; use
   `type=all` (or a specific type) to widen.
-

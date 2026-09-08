@@ -6,7 +6,7 @@ import (
 )
 
 // rateLimiter is an in-memory token bucket keyed by DSN public key. It is the
-// SDK-facing abuse-prevention control (API Gateway usage plans only throttle
+// SDK-facing abuse-prevention control (API Gateway usage plans would only throttle
 // keyed clients, and stock Sentry SDKs never send an API key). In-memory state
 // is per-Lambda-instance; acceptable for MVP, and 429 + Retry-After semantics
 // are honored exactly per the response contract.

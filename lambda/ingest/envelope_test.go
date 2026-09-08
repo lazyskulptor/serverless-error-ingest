@@ -162,6 +162,24 @@ func TestParseEnvelopeUnknownItemTypeAccepted(t *testing.T) {
 	}
 }
 
+func TestParseEnvelopeRejectsTooManyItems(t *testing.T) {
+	var body strings.Builder
+	body.WriteString("{}\n")
+	for i := 0; i < maxEnvelopeItems+1; i++ {
+		body.WriteString("{\"type\":\"event\",\"length\":0}\n\n")
+	}
+	if _, err := ParseEnvelope(strings.NewReader(body.String())); err == nil {
+		t.Fatal("expected item-count error")
+	}
+}
+
+func TestParseEnvelopeRejectsOversizedDeclaredItem(t *testing.T) {
+	body := "{}\n{\"type\":\"attachment\",\"length\":" + itoa(maxItemBytes+1) + "}\n"
+	if _, err := ParseEnvelope(strings.NewReader(body)); err == nil {
+		t.Fatal("expected item-size error")
+	}
+}
+
 func itoa(n int) string {
 	return strconv.Itoa(n)
 }

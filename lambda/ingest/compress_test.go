@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"errors"
 	"testing"
 
 	"github.com/andybalholm/brotli"
@@ -102,7 +103,7 @@ func TestDecompressAllEncodings(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := decompressBody(c.enc, c.body)
+			got, err := decompressBody(c.enc, c.body, 1<<20)
 			if err != nil {
 				t.Fatalf("decompressBody: %v", err)
 			}
@@ -114,13 +115,20 @@ func TestDecompressAllEncodings(t *testing.T) {
 }
 
 func TestDecompressUnknownEncoding(t *testing.T) {
-	if _, err := decompressBody("lz4", []byte("data")); err == nil {
+	if _, err := decompressBody("lz4", []byte("data"), 1<<20); err == nil {
 		t.Fatal("expected error for unknown encoding")
 	}
 }
 
 func TestDecompressGzipCorrupt(t *testing.T) {
-	if _, err := decompressBody("gzip", []byte("not-gzip")); err == nil {
+	if _, err := decompressBody("gzip", []byte("not-gzip"), 1<<20); err == nil {
 		t.Fatal("expected error for corrupt gzip")
+	}
+}
+
+func TestDecompressRejectsExpandedPayloadOverLimit(t *testing.T) {
+	body := gzipBytes(t, bytes.Repeat([]byte("x"), 1024))
+	if _, err := decompressBody("gzip", body, 100); !errors.Is(err, errDecompressedBodyTooLarge) {
+		t.Fatalf("got %v, want decompressed-size error", err)
 	}
 }

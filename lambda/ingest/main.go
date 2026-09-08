@@ -96,7 +96,7 @@ func handleRequest(ctx context.Context, req events.APIGatewayProxyRequest, d *de
 	}
 
 	// 4. Decompress per Content-Encoding (gzip/deflate/br/zstd).
-	decBody, err := decompressBody(contentEncoding(req), body)
+	decBody, err := decompressBody(contentEncoding(req), body, int64(d.maxBodyBytes))
 	if err != nil {
 		slog.ErrorContext(ctx, "decompression failed", "error", err)
 		return respondBadRequest(fmt.Sprintf("decompression failed: %v", err))

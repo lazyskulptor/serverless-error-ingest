@@ -3,14 +3,24 @@ output "api_gateway_url" {
   value       = aws_api_gateway_stage.main.invoke_url
 }
 
+output "custom_domain_url" {
+  description = "Custom-domain base URL, or null when custom DNS is disabled"
+  value       = var.domain_name != "" ? "https://${var.domain_name}" : null
+}
+
+output "public_base_url" {
+  description = "Effective public base URL used by clients and DSNs"
+  value       = var.domain_name != "" ? "https://${var.domain_name}" : aws_api_gateway_stage.main.invoke_url
+}
+
 output "envelope_endpoint" {
   description = "Envelope ingest endpoint (Sentry SDK targets this with a DSN change)"
-  value       = "${aws_api_gateway_stage.main.invoke_url}/api/{project_id}/envelope/"
+  value       = "${var.domain_name != "" ? "https://${var.domain_name}" : aws_api_gateway_stage.main.invoke_url}/api/{project_id}/envelope/"
 }
 
 output "store_endpoint" {
   description = "Store ingest endpoint (legacy Sentry SDKs)"
-  value       = "${aws_api_gateway_stage.main.invoke_url}/api/{project_id}/store/"
+  value       = "${var.domain_name != "" ? "https://${var.domain_name}" : aws_api_gateway_stage.main.invoke_url}/api/{project_id}/store/"
 }
 
 output "raw_bucket" {
@@ -28,22 +38,7 @@ output "events_table" {
   value       = aws_dynamodb_table.events.name
 }
 
-output "usage_plan_id" {
-  description = "API Gateway usage plan id (throttle/quota control)"
-  value       = aws_api_gateway_usage_plan.main.id
-}
-
-output "api_key_id" {
-  description = "API Gateway API key id for keyed clients"
-  value       = aws_api_gateway_api_key.main.id
-}
-
 output "ingest_function_name" {
   description = "Ingest Lambda function name"
   value       = aws_lambda_function.main["ingest"].function_name
-}
-
-output "query_function_name" {
-  description = "Query Lambda function name"
-  value       = aws_lambda_function.main["query"].function_name
 }

@@ -9,6 +9,12 @@ import (
 	"io"
 )
 
+const (
+	maxEnvelopeItems = 100
+	maxHeaderBytes   = 16 << 10
+	maxItemBytes     = 1 << 20
+)
+
 // EnvelopeHeader is the first line of an envelope: compact JSON.
 // Only fields this service cares about are typed; the rest is preserved.
 type EnvelopeHeader struct {
@@ -46,7 +52,10 @@ type Envelope struct {
 //   - terminatedByNewline: true if the line ended with '\n' (vs EOF)
 //   - err: nil normally; io.EOF only when no bytes were read at all
 func readLine(br *bufio.Reader) (line []byte, terminatedByNewline bool, err error) {
-	line, err = br.ReadBytes('\n')
+	line, err = br.ReadSlice('\n')
+	if errors.Is(err, bufio.ErrBufferFull) {
+		return nil, false, errors.New("header or implicit payload line exceeds maximum size")
+	}
 	if len(line) == 0 {
 		if err != nil {
 			return nil, false, err // io.EOF (clean end) or real error
@@ -74,7 +83,7 @@ func readLine(br *bufio.Reader) (line []byte, terminatedByNewline bool, err erro
 // (terminated by '\n' or EOF). This never approximates with a naive
 // newline-split.
 func ParseEnvelope(r io.Reader) (*Envelope, error) {
-	br := bufio.NewReader(r)
+	br := bufio.NewReaderSize(r, maxHeaderBytes+1)
 
 	// Envelope header line: exactly one line of compact JSON.
 	headerLine, _, err := readLine(br)
@@ -93,6 +102,9 @@ func ParseEnvelope(r io.Reader) (*Envelope, error) {
 	env := &Envelope{Header: envHeader}
 
 	for {
+		if len(env.Items) >= maxEnvelopeItems {
+			return nil, fmt.Errorf("envelope exceeds maximum item count of %d", maxEnvelopeItems)
+		}
 		itemHeaderLine, _, err := readLine(br)
 		if errors.Is(err, io.EOF) {
 			break // clean end of envelope (may have zero items)
@@ -130,6 +142,9 @@ func ParseEnvelope(r io.Reader) (*Envelope, error) {
 			if n < 0 {
 				return nil, errors.New("item header has negative length")
 			}
+			if n > maxItemBytes {
+				return nil, fmt.Errorf("item payload exceeds maximum size of %d bytes", maxItemBytes)
+			}
 			payload = make([]byte, n)
 			if _, err := io.ReadFull(br, payload); err != nil {
 				return nil, fmt.Errorf("reading %d-byte payload: %w", n, err)
@@ -147,6 +162,9 @@ func ParseEnvelope(r io.Reader) (*Envelope, error) {
 			payload, _, err = readLine(br)
 			if err != nil {
 				return nil, fmt.Errorf("reading implicit-length payload: %w", err)
+			}
+			if len(payload) > maxItemBytes {
+				return nil, fmt.Errorf("item payload exceeds maximum size of %d bytes", maxItemBytes)
 			}
 		}
 

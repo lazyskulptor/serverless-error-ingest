@@ -41,13 +41,14 @@ Sentry SDK (any language, DSN pointed at this service)
   headers from `docs/COMPATIBILITY.md`.
 - Payload size limit ~1MB — **enforced in the ingest handler** (API Gateway
   REST has no configurable sub-10MB cap); see "Ingest persistence semantics".
-- Usage plan with per-key throttle/burst rate limit and request quota as a
-  secondary abuse-prevention control. Throttled requests surface as `429` with
-  a `Retry-After` header per the response contract.
 - Stage access logs (request metadata only — never bodies) go to a CloudWatch
   log group; CloudWatch alarms cover Lambda errors and API 4xx/5xx rates.
-- WAF + usage plan + Lambda limiter together form three layers of rate
+- WAF and the Lambda limiter provide complementary IP- and DSN-key-based rate
   limiting.
+- An optional regional custom domain uses an AWS ACM certificate. OpenTofu can
+  place both certificate-validation and API records in either an existing
+  Route 53 zone or an existing Cloudflare zone. Cloudflare is DNS-only by
+  default; changing DNS provider does not replace Lambda or storage resources.
 
 ### Lambda ingest handler (Go)
 
@@ -55,7 +56,7 @@ Sentry SDK (any language, DSN pointed at this service)
   `X-Sentry-Auth` header, or envelope header `dsn`), validates against the
   DynamoDB `projects` table.
 - Decompresses the body per `Content-Encoding` (`gzip`, `deflate`, `br`,
-  `zstd`).
+  `zstd`) through a bounded reader.
 - Parses envelopes using the exact length-prefixed grammar in
   `docs/COMPATIBILITY.md` (byte-exact reads, never naive newline splitting).
 - Iterates every item regardless of `type`; archives each item's raw payload to
@@ -77,10 +78,9 @@ Sentry SDK (any language, DSN pointed at this service)
 
 ### Ingest persistence semantics
 
-- **Payload cap**: bodies are rejected with `400` when they exceed
-  `MAX_BODY_BYTES` (default 1 MiB) after base64 decoding, before any
-  decompression or parsing. This is the real enforcement point — API Gateway
-  REST has no configurable sub-10MB cap.
+- **Payload cap**: bodies are rejected with `400` when either compressed or
+  decompressed content exceeds `MAX_BODY_BYTES` (default 1 MiB). Envelope
+  headers, item count, and individual item payloads are bounded as well.
 - **Idempotency**: when an envelope/store payload carries no (valid) client
   `event_id`, the handler derives a stable id from a hash of the raw request
   bytes. Identical SDK retries therefore collapse onto the same S3 objects and
@@ -111,19 +111,19 @@ Sentry SDK (any language, DSN pointed at this service)
 
 ### Observability
 
-- Lambdas emit structured JSON logs (`log/slog`) to CloudWatch — ids/counts
-  only, never payload content — and X-Ray tracing is active.
+- The ingest Lambda emits structured JSON logs (`log/slog`) to CloudWatch —
+  ids/counts only, never payload content.
 - API Gateway stage access logs (request metadata only) go to a CloudWatch log
   group with 14-day retention.
-- CloudWatch alarms: ingest/query Lambda errors, API 4xx (threshold) and 5xx.
+- CloudWatch alarms: ingest Lambda errors, API 4xx (threshold) and 5xx.
+- Growth/abuse alarms cover S3 object count and size, hourly API request volume,
+  ingest Lambda throttles, and DynamoDB write throttles. An existing SNS topic
+  may receive ALARM/OK actions; S3 storage metrics update daily.
 
-### Lambda query handler (Go)
+### Dormant query source
 
-- Read-only `GET /api/projects/{project_id}/events`, lists event metadata from
-  DynamoDB by project, optionally filtered by level/date range.
-- Cursor-based pagination: DynamoDB `LastEvaluatedKey` passed through as an
-  opaque `next_cursor`.
-- Same key validation as ingestion.
+- Query source is retained for future operator tooling, but the production
+  stack creates no query Lambda or GET route.
 
 ### Lambda admin handler (Go) / registration script
 
@@ -131,27 +131,13 @@ Sentry SDK (any language, DSN pointed at this service)
 - The operator hands the client
   `https://{public_key}@{api_gateway_host}/{project_id}` as the DSN.
 
-### Lambda processor (Go, scheduled)
-
-- Runs on an EventBridge schedule (default `rate(5 minutes)`).
-- Scans the events table for `item_type = "event"` rows with
-  `status = "received"`, loads raw payloads from S3, computes a deterministic
-  `issue_id` from the exception fingerprint, and writes `issue_id` +
-  `summary` + `status = "grouped"` back to the row.
-- AI summarization is opt-in and never receives raw payload text — only the
-  extracted fingerprint summary (see `docs/AI.md`).
-
 ## IAM
 
 Least-privilege roles per Lambda handler:
 
 - Ingest: `s3:PutObject` on the raw bucket, `dynamodb:PutItem` on the events
   table, `dynamodb:GetItem` on the projects table.
-- Query: `dynamodb:Query` on the events table, `dynamodb:GetItem` on the
-  projects table.
-- Processor: `dynamodb:Scan`/`UpdateItem` on the events table, `s3:GetObject`
-  on the raw bucket.
-- All Lambdas: `AWSLambdaBasicExecutionRole` + `AWSXRayDaemonWriteAccess`.
+- Ingest also has `AWSLambdaBasicExecutionRole` for CloudWatch logging.
 - API Gateway: account-level CloudWatch logging role (request metadata only).
 
 ## State management
@@ -160,11 +146,14 @@ Terraform state is stored remotely (S3 bucket + DynamoDB lock table) with a
 distinct key per environment; see `infra/README.md` "State management" for the
 one-time bootstrap steps.
 
+The direct API Gateway URL remains an output even when a custom hostname is
+enabled, providing a DNS-independent verification and rollback endpoint.
+
 ## Resilience / abuse prevention
 
 - Missing auth → `403`; unknown key → `401`; malformed payload → `400`;
   oversized payload → `400`.
-- Three layers of rate limiting: WAFv2 rate-based rule (global, per source IP)
-  → API Gateway usage plan (keyed clients) → in-Lambda token bucket (per DSN
-  key, per execution environment, returns `429` + `Retry-After`).
+- Two layers of rate limiting: WAFv2 rate-based rule (global, per source IP)
+  and an in-Lambda token bucket (per DSN key and execution environment,
+  returning `429` + `Retry-After`).
 - Every accepted envelope/item is archived even if its type is not analyzed.

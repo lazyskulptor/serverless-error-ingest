@@ -17,33 +17,52 @@ import (
 // header. Supported encodings (per the wire contract §6): gzip, deflate, br
 // (Brotli), zstd; empty/"identity" pass through. Any other value is an error
 // (caller responds 400).
-func decompressBody(contentEncoding string, body []byte) ([]byte, error) {
+var errDecompressedBodyTooLarge = fmt.Errorf("decompressed payload exceeds maximum size")
+
+func decompressBody(contentEncoding string, body []byte, maxBytes int64) ([]byte, error) {
 	switch strings.ToLower(strings.TrimSpace(contentEncoding)) {
 	case "", "identity":
+		if maxBytes > 0 && int64(len(body)) > maxBytes {
+			return nil, errDecompressedBodyTooLarge
+		}
 		return body, nil
 	case "gzip":
-		return decompressGzip(body)
+		return decompressGzip(body, maxBytes)
 	case "deflate":
-		return decompressDeflate(body)
+		return decompressDeflate(body, maxBytes)
 	case "br":
-		return decompressBrotli(body)
+		return decompressBrotli(body, maxBytes)
 	case "zstd":
-		return decompressZstd(body)
+		return decompressZstd(body, maxBytes)
 	default:
 		return nil, fmt.Errorf("unsupported Content-Encoding %q", contentEncoding)
 	}
 }
 
-func decompressGzip(body []byte) ([]byte, error) {
+func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return io.ReadAll(r)
+	}
+	out, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(out)) > maxBytes {
+		return nil, errDecompressedBodyTooLarge
+	}
+	return out, nil
+}
+
+func decompressGzip(body []byte, maxBytes int64) ([]byte, error) {
 	r, err := gzip.NewReader(bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("gzip: %w", err)
 	}
 	defer r.Close()
-	return io.ReadAll(r)
+	return readLimited(r, maxBytes)
 }
 
-func decompressDeflate(body []byte) ([]byte, error) {
+func decompressDeflate(body []byte, maxBytes int64) ([]byte, error) {
 	// HTTP "deflate" is ambiguous: the zlib wrapper (RFC 1950) is the standard
 	// interpretation, but some clients send raw DEFLATE (RFC 1951). Detect by
 	// the zlib header (first byte 0x78) and fall back to raw flate.
@@ -51,33 +70,33 @@ func decompressDeflate(body []byte) ([]byte, error) {
 		r, err := zlib.NewReader(bytes.NewReader(body))
 		if err == nil {
 			defer r.Close()
-			return io.ReadAll(r)
+			return readLimited(r, maxBytes)
 		}
 	}
 	fr := flate.NewReader(bytes.NewReader(body))
 	defer fr.Close()
-	out, err := io.ReadAll(fr)
+	out, err := readLimited(fr, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("deflate: %w", err)
 	}
 	return out, nil
 }
 
-func decompressBrotli(body []byte) ([]byte, error) {
-	out, err := io.ReadAll(brotli.NewReader(bytes.NewReader(body)))
+func decompressBrotli(body []byte, maxBytes int64) ([]byte, error) {
+	out, err := readLimited(brotli.NewReader(bytes.NewReader(body)), maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("br: %w", err)
 	}
 	return out, nil
 }
 
-func decompressZstd(body []byte) ([]byte, error) {
+func decompressZstd(body []byte, maxBytes int64) ([]byte, error) {
 	r, err := zstd.NewReader(bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("zstd: %w", err)
 	}
 	defer r.Close()
-	out, err := io.ReadAll(r)
+	out, err := readLimited(r, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("zstd: %w", err)
 	}

@@ -27,9 +27,9 @@ go run . -project my-app -host <api-gateway-host>
 Flags:
 
 - `-project` (required) — project id, e.g. `my-app`
-- `-host` (required) — API Gateway host used to render the DSN, e.g.
-  `abc123.execute-api.ap-northeast-2.amazonaws.com` (retrieve from
-  `tofu output api_gateway_url`)
+- `-host` (required) — host used to render the DSN. Use the hostname from
+  `tofu output -raw public_base_url`; this may be API Gateway, Route 53, or
+  Cloudflare-managed DNS.
 - `-region` (default `ap-northeast-2`)
 - `-table` (default `sentry-ingest-projects`)
 - `-secret` — also mint a legacy secret key (optional, deprecated)
@@ -55,3 +55,6 @@ https://<public-key>@abc123.execute-api.ap-northeast-2.amazonaws.com/my-app
 A Sentry SDK initialized with this DSN (plus a stage path if deployed under
 one) sends events to the envelope endpoint
 `/api/{project_id}/envelope/` with **no other configuration change**.
+
+Custom domains map at the API root and do not include the API Gateway stage in
+their DSN path. Direct invoke URLs retain the configured stage path.

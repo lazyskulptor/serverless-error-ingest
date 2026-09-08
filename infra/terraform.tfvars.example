@@ -6,18 +6,20 @@ name_prefix      = "sentry-ingest"
 environment      = "dev"
 stage            = "v1"
 
+# Optional custom API hostname. Leave empty to use the API Gateway URL.
+domain_name = ""
+dns_provider = "aws" # aws or cloudflare
+
+# Set only the zone ID selected by dns_provider.
+route53_zone_id   = ""
+cloudflare_zone_id = ""
+cloudflare_proxied = false
+
 # MUST be globally unique across all AWS accounts.
 raw_bucket_name  = "sentry-ingest-raw-dev"
 
-# Usage plan throttle/quota (per API key).
-usage_plan_burst_limit = 10
-usage_plan_rate_limit  = 5
-usage_plan_quota       = 1000
-
-# Processor (AI grouping/summarization) — AI is opt-in; leave disabled for
-# deterministic grouping only.
-processor_schedule = "rate(5 minutes)"
-ai_enabled         = false
-# ai_api_key_ssm_path = "/sentry-ingest/ai-key"
-# ai_endpoint         = "https://api.openai.com/v1/chat/completions"
-# ai_model            = "gpt-4o-mini"
+# Optional existing SNS topic for CloudWatch alarm/OK notifications.
+alarm_sns_topic_arn = ""
+s3_object_count_alarm_threshold = 100000
+s3_bucket_size_alarm_bytes = 5368709120 # 5 GiB
+api_hourly_request_alarm_threshold = 10000

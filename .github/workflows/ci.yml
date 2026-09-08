@@ -11,9 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # In-scope (collection path) modules only. lambda/processor (AI
-        # grouping/summarization) is intentionally excluded from CI in this
-        # phase by decision, not oversight — see the hardening plan.
         module: [lambda/ingest, lambda/query, scripts/register]
     defaults:
       run:
@@ -54,6 +51,14 @@ jobs:
         with:
           tofu_version: 1.12.x
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+
+      - name: Build Lambda artifacts
+        working-directory: .
+        run: ./scripts/build-lambdas.sh
+
       - name: Init
         run: tofu init -backend=false
 
@@ -62,6 +67,9 @@ jobs:
 
       - name: Validate
         run: tofu validate
+
+      - name: Test DNS provider branches
+        run: tofu test
 
   integration:
     name: LocalStack integration tests (real AWS SDK calls)
@@ -85,14 +93,6 @@ jobs:
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
           AWS_DEFAULT_REGION: ap-northeast-2
-      - name: Query integration
-        working-directory: lambda/query
-        run: go test -tags=integration -race ./...
-        env:
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-          AWS_DEFAULT_REGION: ap-northeast-2
-
   verify-zips:
     name: Lambda artifacts build
     runs-on: ubuntu-latest
@@ -101,13 +101,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"
-      - name: Build ingest bootstrap
-        working-directory: lambda/ingest
-        run: |
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap .
-          zip -q -X function.zip bootstrap
-      - name: Build query bootstrap
-        working-directory: lambda/query
-        run: |
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap .
-          zip -q -X function.zip bootstrap
+      - name: Build deployable Lambda artifact
+        run: ./scripts/build-lambdas.sh
+      - name: Verify artifacts
+        run: test -f lambda/ingest/function.zip

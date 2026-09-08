@@ -26,21 +26,22 @@ So for a project registered with `scripts/register`:
 
 ```sh
 cd scripts/register
-go run . -project my-app -host <api-gateway-host>
+go run . -project my-app -host <public-host>
 ```
 
 the page config is:
 
 ```js
 Sentry.init({
-  dsn: "https://<public-key>@<api-gateway-host>/my-app",
+  dsn: "https://<public-key>@<public-host>/my-app",
   tracesSampleRate: 0,
 });
 ```
 
 ## How to run it
 
-1. Apply infra: `cd infra && tofu apply` and note `api_gateway_url` output.
+1. Apply infra and note `public_base_url`. It resolves to either the direct API
+   Gateway URL or the Route 53/Cloudflare custom hostname.
 2. Register a project (above) and copy the printed DSN into
    `browser/index.html` (`__SENTRY_DSN__`, `__SENTRY_HOST__`,
    `__SENTRY_PROJECT_ID__`).

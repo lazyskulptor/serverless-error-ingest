@@ -21,17 +21,16 @@ Sentry SDK (any language, DSN pointed at this service)
 
 Components:
 
-- **API Gateway (REST)** — routes `POST /api/{project_id}/envelope/` and
-  `POST /api/{project_id}/store/`, 1MB payload cap, CORS handling, usage
-  plan/throttling returning `429` with `Retry-After`.
+- **API Gateway (REST)** — routes only `POST /api/{project_id}/envelope/` and
+  `POST /api/{project_id}/store/`, with CORS and WAF rate limiting.
 - **Lambda ingest handler (Go)** — DSN public-key validation, exact
   length-prefixed envelope parsing, `gzip`/`deflate`/`br`/`zstd`
   decompression, writes raw payloads to S3 and metadata to DynamoDB.
 - **S3** — private, versioned bucket storing every raw envelope/event.
 - **DynamoDB** — `projects` table (DSN keys registry) and `events` table
   (metadata/index: project_id + event_id, GSI on timestamp).
-- **Lambda query handler (Go)** — read-only metadata listing with
-  cursor-based pagination.
+- **Dormant query source (Go)** — retained for future authenticated operator
+  tooling, but no query Lambda or GET route is deployed.
 - **Lambda admin handler (Go)** — project registration + DSN key issuance.
 
 Language choice: Go for all Lambda handlers — fast cold start, exact
@@ -50,11 +49,11 @@ byte-level control for length-prefixed envelope parsing, mature
   `attachment`, `client_report`, `check_in`, ...); every item type is accepted
   and archived so no envelope is ever rejected just because it contains a type
   this project doesn't analyze yet.
-- **AI phase deferred**: grouping/summarization is post-ingest and separate.
+- **AI not deployed**: no processor, schedule, or AI credential resources.
 
 ### Non-goals (explicit)
 
-- No Sentry UI clone. A minimal read/query endpoint is included.
+- No Sentry UI clone or public read/query endpoint.
 - No grouping/dedupe/SourceMap processing in v1 (AI phase).
 - No relay/transaction-heavy features (profiles, replays) in v1.
 
@@ -71,11 +70,17 @@ docs/               COMPATIBILITY.md, ARCHITECTURE.md, QUERY.md, REGISTRATION.md
 
 ## Getting started
 
-1. **Infrastructure**: `cd infra`, copy `terraform.tfvars.example` to
-   `terraform.tfvars`, fill in values, then `tofu init && tofu plan && tofu apply`.
-2. **Register a project**: `cd scripts && go run ./register -project <name>`
+1. Install Go 1.24+, `zip`, OpenTofu 1.6+, and the AWS CLI, then run
+   `./scripts/build-lambdas.sh` from the repository root.
+2. **Infrastructure**: `cd infra`, copy `terraform.tfvars.example` to
+   `terraform.tfvars`, choose either Route 53 (`dns_provider = "aws"`) or
+   Cloudflare (`dns_provider = "cloudflare"`), then run
+   `tofu init && tofu plan && tofu apply`. Leave `domain_name` empty to use the
+   direct API Gateway URL. Cloudflare credentials come from
+   `CLOUDFLARE_API_TOKEN`, never from the tfvars file.
+3. **Register a project**: `cd scripts && go run ./register -project <name>`
    (creates a `projects` table row + DSN public key). See `docs/REGISTRATION.md`.
-3. **Send events**: point a Sentry SDK DSN at
+4. **Send events**: point a Sentry SDK DSN at
    `https://{public_key}@{api_gateway_host}/{project_id}`. See
    `examples/browser/` and `docs/COMPATIBILITY.md`.
 

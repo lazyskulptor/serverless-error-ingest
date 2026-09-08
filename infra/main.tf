@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------
 # Serverless Sentry-Compatible Error Ingest — OpenTofu infrastructure
-# API Gateway (REST) + Lambda (ingest/query) + S3 (raw) + DynamoDB (index)
+# API Gateway (REST) + Lambda (ingest) + S3 (raw) + DynamoDB (index)
 # ---------------------------------------------------------------------------
 
 terraform {
@@ -10,6 +10,10 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
+    }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.0"
     }
   }
 
@@ -32,8 +36,12 @@ provider "aws" {
   region = var.region
 }
 
+provider "cloudflare" {}
+
 locals {
-  name_prefix = var.name_prefix
+  name_prefix           = var.name_prefix
+  custom_domain_enabled = var.domain_name != ""
+  alarm_actions         = var.alarm_sns_topic_arn == "" ? [] : [var.alarm_sns_topic_arn]
 
   common_tags = {
     Project     = "serverless-sentry-ingest"
@@ -41,17 +49,14 @@ locals {
     Environment = var.environment
   }
 
-  # Map of route key -> { resource id, lambda key, http method }
   route_resource_ids = {
     envelope = aws_api_gateway_resource.envelope.id
     store    = aws_api_gateway_resource.store.id
-    events   = aws_api_gateway_resource.events.id
   }
 
   api_routes = {
     envelope = { resource = "envelope", lambda = "ingest", http = "POST" }
     store    = { resource = "store", lambda = "ingest", http = "POST" }
-    events   = { resource = "events", lambda = "query", http = "GET" }
   }
 }
 
@@ -209,67 +214,9 @@ resource "aws_iam_role_policy" "ingest" {
   })
 }
 
-resource "aws_iam_role" "query" {
-  name = "${local.name_prefix}-query-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = local.common_tags
-}
-
-resource "aws_iam_role_policy" "query" {
-  name = "${local.name_prefix}-query-policy"
-  role = aws_iam_role.query.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["dynamodb:Query"]
-        Resource = [aws_dynamodb_table.events.arn]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["dynamodb:GetItem"]
-        Resource = [aws_dynamodb_table.projects.arn]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = ["${aws_s3_bucket.raw.arn}/*"]
-      }
-    ]
-  })
-}
-
 resource "aws_iam_role_policy_attachment" "ingest_logs" {
   role       = aws_iam_role.ingest.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "ingest_xray" {
-  role       = aws_iam_role.ingest.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "query_logs" {
-  role       = aws_iam_role.query.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "query_xray" {
-  role       = aws_iam_role.query.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }
 
 # ---------------------------------------------------------------------------
@@ -289,18 +236,7 @@ resource "aws_lambda_function" "main" {
         RAW_BUCKET     = aws_s3_bucket.raw.id
         EVENTS_TABLE   = aws_dynamodb_table.events.name
         PROJECTS_TABLE = aws_dynamodb_table.projects.name
-      }
-    }
-    query = {
-      role        = aws_iam_role.query.arn
-      zip_path    = "../lambda/query/function.zip"
-      timeout     = 15
-      memory_size = 128
-      description = "Read-only event metadata query handler"
-      env_vars = {
-        EVENTS_TABLE   = aws_dynamodb_table.events.name
-        PROJECTS_TABLE = aws_dynamodb_table.projects.name
-        RAW_BUCKET     = aws_s3_bucket.raw.id
+        EVENT_TTL_DAYS = tostring(var.event_ttl_days)
       }
     }
   }
@@ -320,10 +256,6 @@ resource "aws_lambda_function" "main" {
     variables = each.value.env_vars
   }
 
-  tracing_config {
-    mode = "Active"
-  }
-
   tags = local.common_tags
 }
 
@@ -335,118 +267,6 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.main[each.value.lambda].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.main.execution_arn}/*/${each.value.http}/${each.key}"
-}
-
-# ---------------------------------------------------------------------------
-# Processor Lambda (post-ingest grouping/summarization, scheduled)
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_role" "processor" {
-  name = "${local.name_prefix}-processor-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = local.common_tags
-}
-
-resource "aws_iam_role_policy" "processor" {
-  name = "${local.name_prefix}-processor-policy"
-  role = aws_iam_role.processor.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["dynamodb:Scan", "dynamodb:UpdateItem"]
-        Resource = [aws_dynamodb_table.events.arn]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = ["${aws_s3_bucket.raw.arn}/*"]
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "processor_logs" {
-  role       = aws_iam_role.processor.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "processor_xray" {
-  role       = aws_iam_role.processor.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
-}
-
-# Optional AI key from SSM — never in source control.
-data "aws_ssm_parameter" "ai_key" {
-  count = var.ai_api_key_ssm_path != "" ? 1 : 0
-  name  = var.ai_api_key_ssm_path
-}
-
-resource "aws_lambda_function" "processor" {
-  function_name = "${local.name_prefix}-processor"
-  role          = aws_iam_role.processor.arn
-  handler       = "bootstrap"
-  runtime       = "provided.al2023"
-  architectures = ["arm64"]
-  timeout       = 60
-  memory_size   = 256
-  description   = "Post-ingest grouping/summarization processor"
-
-  filename = "../lambda/processor/function.zip"
-
-  tracing_config {
-    mode = "Active"
-  }
-
-  environment {
-    variables = merge(
-      {
-        EVENTS_TABLE = aws_dynamodb_table.events.name
-        RAW_BUCKET   = aws_s3_bucket.raw.id
-        # AI is opt-in: leave unset for deterministic grouping only.
-        PROJECT_ALLOW_AI = var.ai_enabled ? "true" : "false"
-      },
-      var.ai_api_key_ssm_path != "" ? { AI_API_KEY = data.aws_ssm_parameter.ai_key[0].value } : {},
-      var.ai_endpoint != "" ? { AI_ENDPOINT = var.ai_endpoint } : {},
-      var.ai_model != "" ? { AI_MODEL = var.ai_model } : {},
-    )
-  }
-
-  tags = local.common_tags
-}
-
-resource "aws_cloudwatch_event_rule" "processor" {
-  name                = "${local.name_prefix}-processor-schedule"
-  description         = "Scheduled processor run for grouping/summarization"
-  schedule_expression = var.processor_schedule
-  tags                = local.common_tags
-}
-
-resource "aws_cloudwatch_event_target" "processor" {
-  rule      = aws_cloudwatch_event_rule.processor.name
-  target_id = "processor"
-  arn       = aws_lambda_function.processor.arn
-}
-
-resource "aws_lambda_permission" "processor_events" {
-  statement_id  = "AllowExecutionFromEventBridge"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.processor.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.processor.arn
 }
 
 # ---------------------------------------------------------------------------
@@ -546,28 +366,7 @@ resource "aws_api_gateway_resource" "store" {
   path_part   = "store"
 }
 
-# /api/projects (static — distinct from {project_id})
-resource "aws_api_gateway_resource" "projects_root" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_resource.api.id
-  path_part   = "projects"
-}
-
-# /api/projects/{project_id}
-resource "aws_api_gateway_resource" "project_by_id" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_resource.projects_root.id
-  path_part   = "{project_id}"
-}
-
-# /api/projects/{project_id}/events
-resource "aws_api_gateway_resource" "events" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_resource.project_by_id.id
-  path_part   = "events"
-}
-
-# --- Lambda proxy methods (POST/GET) ---
+# --- Lambda proxy methods (POST only) ---
 
 resource "aws_api_gateway_method" "main" {
   for_each = local.api_routes
@@ -685,7 +484,7 @@ resource "aws_api_gateway_gateway_response" "quota_exceeded" {
   }
 }
 
-# --- Deployment, stage, usage plan ---
+# --- Deployment and stage ---
 
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -725,6 +524,117 @@ resource "aws_api_gateway_stage" "main" {
   }
 
   tags = local.common_tags
+}
+
+# --- Optional custom domain and selectable DNS management ---
+
+resource "aws_acm_certificate" "api" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+  tags              = local.common_tags
+
+  lifecycle {
+    create_before_destroy = true
+    precondition {
+      condition = (
+        (var.dns_provider == "aws" && var.route53_zone_id != "") ||
+        (var.dns_provider == "cloudflare" && var.cloudflare_zone_id != "")
+      )
+      error_message = "A custom domain requires route53_zone_id for aws DNS or cloudflare_zone_id for cloudflare DNS."
+    }
+  }
+}
+
+locals {
+  certificate_validation_options = local.custom_domain_enabled ? {
+    for option in aws_acm_certificate.api[0].domain_validation_options : option.domain_name => {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }
+  } : {}
+}
+
+resource "aws_route53_record" "certificate_validation" {
+  for_each = local.custom_domain_enabled && var.dns_provider == "aws" ? local.certificate_validation_options : {}
+
+  zone_id         = var.route53_zone_id
+  name            = each.value.name
+  type            = each.value.type
+  ttl             = 300
+  records         = [each.value.value]
+  allow_overwrite = true
+}
+
+resource "cloudflare_record" "certificate_validation" {
+  for_each = local.custom_domain_enabled && var.dns_provider == "cloudflare" ? local.certificate_validation_options : {}
+
+  zone_id         = var.cloudflare_zone_id
+  name            = trimsuffix(each.value.name, ".")
+  type            = each.value.type
+  content         = trimsuffix(each.value.value, ".")
+  ttl             = 300
+  proxied         = false
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "api" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  certificate_arn = aws_acm_certificate.api[0].arn
+  validation_record_fqdns = var.dns_provider == "aws" ? [
+    for record in aws_route53_record.certificate_validation : record.fqdn
+    ] : [
+    for record in cloudflare_record.certificate_validation : record.hostname
+  ]
+}
+
+resource "aws_api_gateway_domain_name" "api" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  domain_name              = var.domain_name
+  regional_certificate_arn = aws_acm_certificate_validation.api[0].certificate_arn
+
+  endpoint_configuration {
+    types = ["REGIONAL"]
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_api_gateway_base_path_mapping" "api" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  api_id      = aws_api_gateway_rest_api.main.id
+  stage_name  = aws_api_gateway_stage.main.stage_name
+  domain_name = aws_api_gateway_domain_name.api[0].domain_name
+}
+
+resource "aws_route53_record" "api" {
+  count = local.custom_domain_enabled && var.dns_provider == "aws" ? 1 : 0
+
+  zone_id = var.route53_zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_api_gateway_domain_name.api[0].regional_domain_name
+    zone_id                = aws_api_gateway_domain_name.api[0].regional_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "cloudflare_record" "api" {
+  count = local.custom_domain_enabled && var.dns_provider == "cloudflare" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.domain_name
+  type    = "CNAME"
+  content = aws_api_gateway_domain_name.api[0].regional_domain_name
+  ttl     = var.cloudflare_proxied ? 1 : 300
+  proxied = var.cloudflare_proxied
 }
 
 # API Gateway access logs (request metadata only — never request bodies).
@@ -782,24 +692,10 @@ resource "aws_cloudwatch_metric_alarm" "ingest_errors" {
   statistic           = "Sum"
   threshold           = 0
   alarm_description   = "Ingest Lambda errors"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
   dimensions = {
     FunctionName = aws_lambda_function.main["ingest"].function_name
-  }
-  tags = local.common_tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "query_errors" {
-  alarm_name          = "${local.name_prefix}-query-errors"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "Query Lambda errors"
-  dimensions = {
-    FunctionName = aws_lambda_function.main["query"].function_name
   }
   tags = local.common_tags
 }
@@ -814,6 +710,8 @@ resource "aws_cloudwatch_metric_alarm" "api_4xx" {
   statistic           = "Sum"
   threshold           = 100
   alarm_description   = "API Gateway 4xx rate elevated"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
   dimensions = {
     ApiName = aws_api_gateway_rest_api.main.name
     Stage   = aws_api_gateway_stage.main.stage_name
@@ -831,6 +729,8 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
   statistic           = "Sum"
   threshold           = 0
   alarm_description   = "API Gateway 5xx errors"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
   dimensions = {
     ApiName = aws_api_gateway_rest_api.main.name
     Stage   = aws_api_gateway_stage.main.stage_name
@@ -838,40 +738,105 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
   tags = local.common_tags
 }
 
-# Usage plan with per-key throttle/burst + daily quota (abuse prevention).
-# SDK-facing methods do NOT require an API key (stock Sentry SDKs never send
-# one); the usage plan applies to clients that present the issued API key.
-# SDK traffic rate limiting is enforced in the ingest handler (429 +
-# Retry-After). The THROTTLED/QUOTA_EXCEEDED gateway responses above guarantee
-# gateway-level limits also surface per the response contract.
-
-resource "aws_api_gateway_api_key" "main" {
-  name = "${local.name_prefix}-key"
+resource "aws_cloudwatch_metric_alarm" "s3_object_count" {
+  alarm_name          = "${local.name_prefix}-s3-object-count"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "NumberOfObjects"
+  namespace           = "AWS/S3"
+  period              = 86400
+  statistic           = "Average"
+  threshold           = var.s3_object_count_alarm_threshold
+  alarm_description   = "Raw archive object count reached the configured growth threshold; S3 storage metrics update daily"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    BucketName  = aws_s3_bucket.raw.id
+    StorageType = "AllStorageTypes"
+  }
   tags = local.common_tags
 }
 
-resource "aws_api_gateway_usage_plan" "main" {
-  name = "${local.name_prefix}-usage-plan"
+resource "aws_cloudwatch_metric_alarm" "s3_bucket_size" {
+  alarm_name          = "${local.name_prefix}-s3-bucket-size"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "BucketSizeBytes"
+  namespace           = "AWS/S3"
+  period              = 86400
+  statistic           = "Average"
+  threshold           = var.s3_bucket_size_alarm_bytes
+  alarm_description   = "Raw archive size reached the configured growth threshold; S3 storage metrics update daily"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    BucketName  = aws_s3_bucket.raw.id
+    StorageType = "StandardStorage"
+  }
   tags = local.common_tags
-
-  api_stages {
-    api_id = aws_api_gateway_rest_api.main.id
-    stage  = aws_api_gateway_stage.main.stage_name
-  }
-
-  throttle_settings {
-    burst_limit = var.usage_plan_burst_limit
-    rate_limit  = var.usage_plan_rate_limit
-  }
-
-  quota_settings {
-    limit  = var.usage_plan_quota
-    period = "DAY"
-  }
 }
 
-resource "aws_api_gateway_usage_plan_key" "main" {
-  key_id        = aws_api_gateway_api_key.main.id
-  key_type      = "API_KEY"
-  usage_plan_id = aws_api_gateway_usage_plan.main.id
+resource "aws_cloudwatch_metric_alarm" "api_request_volume" {
+  alarm_name          = "${local.name_prefix}-api-hourly-requests"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Count"
+  namespace           = "AWS/ApiGateway"
+  period              = 3600
+  statistic           = "Sum"
+  threshold           = var.api_hourly_request_alarm_threshold
+  alarm_description   = "API request volume reached the configured hourly abuse threshold"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    ApiName = aws_api_gateway_rest_api.main.name
+    Stage   = aws_api_gateway_stage.main.stage_name
+  }
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "ingest_throttles" {
+  alarm_name          = "${local.name_prefix}-ingest-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "Ingest Lambda was throttled"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    FunctionName = aws_lambda_function.main["ingest"].function_name
+  }
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "dynamodb_write_throttles" {
+  for_each = {
+    projects = aws_dynamodb_table.projects.name
+    events   = aws_dynamodb_table.events.name
+  }
+
+  alarm_name          = "${local.name_prefix}-${each.key}-write-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "WriteThrottleEvents"
+  namespace           = "AWS/DynamoDB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "DynamoDB ${each.key} writes were throttled"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    TableName = each.value
+  }
+  tags = local.common_tags
 }

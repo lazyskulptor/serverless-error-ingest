@@ -7,16 +7,13 @@ ingest service.
 
 | Resource | Purpose |
 |---|---|
-| API Gateway (REST) | `POST /api/{project_id}/envelope/`, `POST /api/{project_id}/store/`, `GET /api/projects/{project_id}/events`, `OPTIONS` CORS mock on every route |
+| API Gateway (REST) | `POST /api/{project_id}/envelope/`, `POST /api/{project_id}/store/`, and `OPTIONS` CORS mock |
 | Lambda `sentry-ingest-ingest` | Sentry wire-protocol ingest handler (Go) |
-| Lambda `sentry-ingest-query` | Read-only event metadata query handler (Go) |
-| Lambda `sentry-ingest-processor` | Post-ingest grouping/summarization (Go, EventBridge scheduled) |
 | S3 `raw` bucket | Private, versioned, SSE-encrypted archive of raw envelopes/events |
 | DynamoDB `-projects` | DSN public-key registry (partition key `project_id`) |
 | DynamoDB `-events` | Event metadata index (partition key `project_id`, sort key `event_id`, GSI `TimestampIndex` on `timestamp`) |
-| Usage plan + API key | Per-key throttle/burst rate limit + daily quota |
 | WAFv2 web ACL | Rate-based rule (per source IP) in front of the stage |
-| CloudWatch | Lambda + API alarms, stage access logs (metadata only), X-Ray tracing active on Lambdas |
+| CloudWatch | Lambda, API, storage and throttle alarms; stage access logs contain metadata only |
 
 ## Cost control
 
@@ -26,37 +23,38 @@ ingest service.
 - DynamoDB TTL: `events` rows expire after `event_ttl_days` (default 90); the
   ingest handler writes `expires_at` on every row.
 
+## Growth and abuse alarms
+
+CloudWatch alarms are created for raw S3 object count (100,000), S3 Standard
+storage (5 GiB), hourly API requests (10,000), any ingest Lambda throttle, and
+any DynamoDB write throttle. The thresholds are initial small-service defaults,
+not AWS universal recommendations, and can be changed in `terraform.tfvars`.
+S3 storage metrics are published daily, so those two alarms are not real-time.
+
+Set `alarm_sns_topic_arn` to an existing operations SNS topic to receive ALARM
+and OK notifications. OpenTofu intentionally does not create an email
+subscription or assume which account user is an administrator. With an empty
+topic ARN, alarms still exist in CloudWatch but send no notification. Configure
+an AWS Budget separately for cost-based notification because CloudWatch object
+and request alarms do not predict the bill.
+
 ## Abuse prevention
 
-- 1MB payload cap enforced by API Gateway.
-- Usage plan with per-key throttle (`rate_limit` req/s) and daily quota.
-  Methods do **not** require the API key because stock Sentry SDKs never send
-  one — keyed clients are throttled by the usage plan, and SDK-facing traffic
-  is rate-limited inside the ingest handler (returns `429` + `Retry-After`).
+- A 1 MiB compressed and decompressed payload cap is enforced by the ingest
+  handler, including bounded gzip/deflate/br/zstd decoding.
+- SDK-facing traffic is rate-limited by WAF per source IP and inside the ingest
+  handler per DSN public key (returns `429` + `Retry-After`).
 - Gateway-level `THROTTLED` / `QUOTA_EXCEEDED` responses are mapped to `429`
   with a `Retry-After` header per the response contract in
   `docs/COMPATIBILITY.md`.
 
 ## Building the Lambda artifacts
 
-Each handler is a Go module producing a zip for the `provided.al2023` runtime:
+From the repository root, build the deployable ingest handler with the same command
+used by CI:
 
 ```sh
-# ingest
-cd lambda/ingest
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap .
-zip function.zip bootstrap
-mv function.zip ../../infra/../lambda/ingest/function.zip
-
-# query
-cd lambda/query
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap .
-zip function.zip bootstrap
-
-# processor (optional, for AI grouping/summarization)
-cd lambda/processor
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bootstrap .
-zip function.zip bootstrap
+./scripts/build-lambdas.sh
 ```
 
 (`function.zip` files are git-ignored.)
@@ -65,13 +63,55 @@ zip function.zip bootstrap
 
 ```sh
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars — raw_bucket_name must be globally unique
+# edit terraform.tfvars — raw_bucket_name must be globally unique; choose the
+# DNS configuration below without placing credentials in this file
 
 tofu init
 tofu validate
 tofu plan
 tofu apply
 ```
+
+## Custom domain and DNS provider
+
+The service always runs on AWS. Set `domain_name` to enable an ACM certificate
+and an API Gateway regional custom domain. Leave it empty for the direct invoke
+URL.
+
+Route 53 example:
+
+```hcl
+domain_name    = "errors.example.com"
+dns_provider   = "aws"
+route53_zone_id = "Z1234567890"
+```
+
+Cloudflare example:
+
+```hcl
+domain_name          = "errors.example.com"
+dns_provider         = "cloudflare"
+cloudflare_zone_id   = "0123456789abcdef0123456789abcdef"
+cloudflare_proxied   = false
+```
+
+Export `CLOUDFLARE_API_TOKEN` with DNS Edit access to the selected zone before
+running OpenTofu. DNS-only mode is the supported default; inspect and test API
+Gateway behavior before enabling the Cloudflare proxy. AWS credentials use the
+standard AWS provider chain.
+
+The query source remains in the repository for future operator-authentication
+work, but no query Lambda or GET route is deployed.
+
+For existing records, import them before apply or remove them deliberately;
+never allow OpenTofu to overwrite an unmanaged production record without first
+reviewing the plan. Reduce TTL before migration, wait for ACM validation, then
+verify `dig errors.example.com`, the TLS issuer/SAN, and a test envelope.
+
+To move providers, keep `domain_name` unchanged, configure the destination
+zone, inspect the plan to ensure Lambda/S3/DynamoDB are unchanged, and apply.
+Rollback by restoring the prior DNS record or by using `api_gateway_url`, which
+is always retained as a direct endpoint.
 
 ## State management (remote backend)
 
@@ -115,9 +155,11 @@ bucket remains as defense-in-depth for per-key SDK traffic (see
 Outputs after apply:
 
 - `api_gateway_url` — base URL
+- `custom_domain_url` — custom URL or null
+- `public_base_url` — effective URL for clients and DSNs
 - `envelope_endpoint` / `store_endpoint` — ingest endpoints
 - `raw_bucket`, `projects_table`, `events_table` — storage names
-- `usage_plan_id`, `api_key_id` — throttling controls
+- WAF and ingest-handler limits provide throttling controls for stock SDK traffic
 
 ## Registration
 

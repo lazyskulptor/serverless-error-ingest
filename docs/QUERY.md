@@ -1,5 +1,9 @@
 # Query API
 
+> Deployment status: dormant source only. The production OpenTofu stack does
+> not create this Lambda or any GET route. A separate operator-authentication
+> design is required before deployment.
+
 Read-only endpoint listing event metadata ingested by the service. Raw
 payload content is **not** returned — only metadata summaries (plus the S3
 path where the raw archive lives).
