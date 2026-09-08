@@ -31,10 +31,6 @@ variable "resource_name_prefix" {
   default = "sentry-ingest"
 }
 
-variable "raw_bucket_name" {
-  type = string
-}
-
 variable "route53_zone_arn" {
   description = "Optional hosted-zone ARN used by production"
   type        = string

@@ -250,7 +250,8 @@ resource "aws_lambda_function" "main" {
   memory_size   = each.value.memory_size
   description   = each.value.description
 
-  filename = each.value.zip_path
+  filename         = each.value.zip_path
+  source_code_hash = filebase64sha256(each.value.zip_path)
 
   environment {
     variables = each.value.env_vars
@@ -507,13 +508,27 @@ resource "aws_api_gateway_deployment" "main" {
 
   triggers = {
     redeployment = sha1(jsonencode({
-      rest_api = aws_api_gateway_rest_api.main.id
-      methods  = [for m in aws_api_gateway_method.main : m.id]
-      opts     = [for m in aws_api_gateway_method.options : m.id]
-      integs   = [for i in aws_api_gateway_integration.main : i.id]
-      oints    = [for i in aws_api_gateway_integration.options : i.id]
+      rest_api              = aws_api_gateway_rest_api.main.id
+      methods               = [for m in aws_api_gateway_method.main : m.id]
+      opts                  = [for m in aws_api_gateway_method.options : m.id]
+      integs                = [for i in aws_api_gateway_integration.main : i.id]
+      oints                 = [for i in aws_api_gateway_integration.options : i.id]
+      method_responses      = [for r in aws_api_gateway_method_response.main : r.id]
+      option_responses      = [for r in aws_api_gateway_method_response.options : r.id]
+      integration_responses = [for r in aws_api_gateway_integration_response.options : r.id]
+      gateway_responses = [
+        aws_api_gateway_gateway_response.throttled.id,
+        aws_api_gateway_gateway_response.quota_exceeded.id,
+      ]
     }))
   }
+
+  depends_on = [
+    aws_api_gateway_integration.main,
+    aws_api_gateway_integration_response.options,
+    aws_api_gateway_method_response.main,
+    aws_api_gateway_method_response.options,
+  ]
 
   lifecycle {
     create_before_destroy = true

@@ -77,7 +77,7 @@ jobs:
           set -euo pipefail
           run_id=$(gh api --paginate \
             "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE_SHA&status=success&event=push&per_page=100" \
-            --jq '.workflow_runs | sort_by(.created_at) | last | .id')
+            --jq '[.workflow_runs[] | select(.run_attempt == 1)] | sort_by(.created_at) | first | .id')
           if [[ -z "$run_id" || "$run_id" = null ]]; then
             echo "No successful push CI run found for $RELEASE_SHA; rerun CI or release a fresh reviewed commit." >&2
             exit 1
@@ -124,10 +124,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TF_VAR_raw_bucket_name: ${{ vars.RAW_BUCKET_NAME }}
           TF_VAR_region: ${{ vars.AWS_REGION }}
+          TF_VAR_name_prefix: ${{ vars.NAME_PREFIX }}
+          TF_VAR_environment: ${{ vars.DEPLOY_ENVIRONMENT }}
+          TF_VAR_stage: ${{ vars.API_STAGE }}
           TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
           TF_VAR_dns_provider: ${{ vars.DNS_PROVIDER }}
           TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
           TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          TF_VAR_cloudflare_proxied: ${{ vars.CLOUDFLARE_PROXIED }}
+          TF_VAR_waf_rate_limit: ${{ vars.WAF_RATE_LIMIT }}
+          TF_VAR_raw_standard_ia_days: ${{ vars.RAW_STANDARD_IA_DAYS }}
+          TF_VAR_raw_expiration_days: ${{ vars.RAW_EXPIRATION_DAYS }}
+          TF_VAR_event_ttl_days: ${{ vars.EVENT_TTL_DAYS }}
+          TF_VAR_alarm_sns_topic_arn: ${{ vars.ALARM_SNS_TOPIC_ARN }}
         run: |
           set -euo pipefail
           tofu plan -no-color -lock-timeout=5m -var-file=production.tfvars.example -out=tfplan | tee plan.log

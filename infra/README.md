@@ -185,7 +185,10 @@ Configure these repository/environment variables:
 - `AWS_APPLY_ROLE_ARN`
 - `TF_STATE_BUCKET`, `TF_STATE_LOCK_TABLE`, `TF_STATE_KEY`
 - `RAW_BUCKET_NAME`, `DEPLOY_ENVIRONMENT` (defaults to `production`)
+- `NAME_PREFIX`, `API_STAGE`
 - `DOMAIN_NAME`, `DNS_PROVIDER`, `ROUTE53_ZONE_ID`, `CLOUDFLARE_ZONE_ID`
+- `CLOUDFLARE_PROXIED`, `WAF_RATE_LIMIT`, `RAW_STANDARD_IA_DAYS`
+- `RAW_EXPIRATION_DAYS`, `EVENT_TTL_DAYS`, `ALARM_SNS_TOPIC_ARN`
 
 For Cloudflare DNS, add protected environment secret
 `CLOUDFLARE_API_TOKEN`; it is never exposed to pull requests. Add protected
@@ -211,8 +214,9 @@ The API Gateway regional custom-domain target is only a DNS CNAME target; it is
 not the direct invoke URL. For DNS-independent diagnosis use the complete
 `api_gateway_url` output, including its stage path.
 
-Require the CI and deploy-plan checks in branch protection. Workflow
-concurrency and the DynamoDB state lock prevent overlapping applies.
+Require all CI jobs in branch protection. Release deployment is separately
+gated by the protected environment; workflow concurrency and the DynamoDB state
+lock prevent overlapping applies.
 
 ### Existing resources and partial applies
 
@@ -227,8 +231,9 @@ delete the raw bucket or event tables as generic recovery.
 
 ### Rollback
 
-Revert the offending commit through a reviewed pull request and let the workflow
-apply its saved rollback plan. Do not rerun project registration. During a DNS
+Revert the offending commit through a reviewed pull request, publish a new
+rollback Release, and let the workflow apply its saved plan. Do not rerun
+project registration. During a DNS
 incident, use the retained `api_gateway_url`. If apply fails, inspect the remote
 state and AWS resources before retrying; never delete the raw S3 bucket or event
 tables as a generic recovery step.
