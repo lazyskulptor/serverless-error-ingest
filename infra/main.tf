@@ -385,6 +385,8 @@ resource "aws_api_gateway_method_response" "main" {
   resource_id = local.route_resource_ids[each.value.resource]
   http_method = each.value.http
   status_code = "200"
+
+  depends_on = [aws_api_gateway_method.main]
 }
 
 resource "aws_api_gateway_integration" "main" {
@@ -396,6 +398,8 @@ resource "aws_api_gateway_integration" "main" {
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
   uri                     = aws_lambda_function.main[each.value.lambda].invoke_arn
+
+  depends_on = [aws_api_gateway_method.main]
 }
 
 # --- CORS preflight: OPTIONS mock on every route ---
@@ -422,6 +426,9 @@ resource "aws_api_gateway_method_response" "options" {
     "method.response.header.Access-Control-Allow-Methods" = true
     "method.response.header.Access-Control-Allow-Origin"  = true
   }
+
+
+  depends_on = [aws_api_gateway_method.options]
 }
 
 resource "aws_api_gateway_integration" "options" {
@@ -435,6 +442,9 @@ resource "aws_api_gateway_integration" "options" {
   request_templates = {
     "application/json" = "{\"statusCode\": 200}"
   }
+
+
+  depends_on = [aws_api_gateway_method.options]
 }
 
 resource "aws_api_gateway_integration_response" "options" {
@@ -450,6 +460,12 @@ resource "aws_api_gateway_integration_response" "options" {
     "method.response.header.Access-Control-Allow-Methods" = "'POST, OPTIONS'"
     "method.response.header.Access-Control-Allow-Origin"  = "'*'"
   }
+
+
+  depends_on = [
+    aws_api_gateway_integration.options,
+    aws_api_gateway_method_response.options,
+  ]
 }
 
 # --- Gateway responses: throttled/quota-exceeded must surface 429 + Retry-After ---
@@ -460,7 +476,7 @@ resource "aws_api_gateway_gateway_response" "throttled" {
   status_code   = "429"
 
   response_parameters = {
-    "gatewayresponse.header.Retry-After"                 = "60"
+    "gatewayresponse.header.Retry-After"                 = "'60'"
     "gatewayresponse.header.Access-Control-Allow-Origin" = "'*'"
   }
 
@@ -475,7 +491,7 @@ resource "aws_api_gateway_gateway_response" "quota_exceeded" {
   status_code   = "429"
 
   response_parameters = {
-    "gatewayresponse.header.Retry-After"                 = "60"
+    "gatewayresponse.header.Retry-After"                 = "'60'"
     "gatewayresponse.header.Access-Control-Allow-Origin" = "'*'"
   }
 
@@ -670,7 +686,7 @@ resource "aws_iam_role_policy" "api_gw_logs" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-      Resource = ["${aws_cloudwatch_log_group.api_gw.arn}:*"]
+      Resource = ["arn:aws:logs:${var.region}:*:*"]
     }]
   })
 }
@@ -678,6 +694,8 @@ resource "aws_iam_role_policy" "api_gw_logs" {
 # Account-level CloudWatch role for API Gateway logging (one per account).
 resource "aws_api_gateway_account" "main" {
   cloudwatch_role_arn = aws_iam_role.api_gw_logs.arn
+
+  depends_on = [aws_iam_role_policy.api_gw_logs]
 }
 
 # --- CloudWatch alarms ---
