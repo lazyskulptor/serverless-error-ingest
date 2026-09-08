@@ -92,7 +92,7 @@ jobs:
           gh run download "${{ steps.ci.outputs.run_id }}" \
             --repo "$GITHUB_REPOSITORY" \
             --name "lambda-${{ steps.release.outputs.sha }}" \
-            --dir .
+            --dir lambda/ingest
           sha256sum --check lambda/ingest/function.zip.sha256
 
       - uses: aws-actions/configure-aws-credentials@v4
