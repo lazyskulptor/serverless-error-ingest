@@ -1,8 +1,30 @@
-# Serverless Sentry-Compatible Error Ingest
+# Serverless Sentry Alternative for AWS
 
-Open-source, serverless error/event collection service that accepts the same
-wire protocol as Sentry. Existing Sentry SDKs (`@sentry/browser` and friends)
-can point their DSN at this project and send events with **only a DSN change**.
+An open-source, self-hosted Sentry-compatible error ingestion backend for AWS.
+Keep existing Sentry SDKs (`@sentry/browser` and others), change only the DSN,
+and archive errors in your own S3 bucket with searchable metadata in DynamoDB.
+It runs serverlessly on API Gateway and Lambda, without operating a full Sentry
+installation.
+
+Use it when you need a lightweight Sentry alternative for error collection,
+data ownership, development, internal tools, or custom observability pipelines.
+It replaces Sentry's ingestion layer—not the Sentry dashboard, issue grouping,
+alerting, performance monitoring, or source-map processing.
+
+## Why this project?
+
+- **Sentry SDK compatible** — existing SDK transport works with a DSN change.
+- **Self-hosted in your AWS account** — raw events stay in private S3 and
+  metadata stays in DynamoDB.
+- **Serverless and low-operations** — no Kubernetes, Kafka, ClickHouse, or
+  always-on application servers.
+- **OpenTofu deployment** — reproducible API Gateway, Lambda, WAF, storage,
+  logging, alarms, DNS, and GitHub OIDC automation.
+- **Collection-focused** — a small foundation for teams building their own
+  error-processing, analytics, retention, or AI workflows.
+
+If you need a complete error-monitoring product with UI and issue workflows,
+consider self-hosted Sentry, GlitchTip, Bugsink, Highlight, or SigNoz instead.
 
 ## Architecture
 
