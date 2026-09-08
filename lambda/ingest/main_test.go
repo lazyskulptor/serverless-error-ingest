@@ -100,7 +100,7 @@ func TestHandleEnvelopeSuccess(t *testing.T) {
 	if len(arch.objects) != 3 {
 		t.Errorf("want 3 s3 objects, got %d", len(arch.objects))
 	}
-	if _, ok := arch.objects["projects/proj1/2026/08/06/e1.envelope"]; !ok {
+	if _, ok := arch.objects["projects/proj1/2026-08-06/e1.envelope"]; !ok {
 		t.Errorf("missing envelope object, have %v", keys(arch.objects))
 	}
 	if len(idx.rows) != 2 {

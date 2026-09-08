@@ -174,7 +174,7 @@ func persist(ctx context.Context, d *deps, projectID, eventID string, raw []byte
 		eventID = deterministicID(raw)
 	}
 
-	date := now.UTC().Format("2006/01/02")
+	date := now.UTC().Format("2006-01-02")
 	envKey := fmt.Sprintf("projects/%s/%s/%s.envelope", projectID, date, eventID)
 	if err := d.arch.PutObject(ctx, envKey, raw); err != nil {
 		return fmt.Errorf("archiving envelope: %w", err)
