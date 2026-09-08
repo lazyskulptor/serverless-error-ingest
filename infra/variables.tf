@@ -72,6 +72,12 @@ variable "raw_bucket_name" {
   type        = string
 }
 
+variable "allow_destroy_data" {
+  description = "Allow destroy to permanently delete S3 objects/versions and DynamoDB tables. Defaults to true for disposable development deployments; production must set false before first apply."
+  type        = bool
+  default     = true
+}
+
 variable "waf_rate_limit" {
   description = "WAF rate-based rule limit: max requests per 5 minutes per source IP"
   type        = number

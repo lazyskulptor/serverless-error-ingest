@@ -18,6 +18,10 @@ cloudflare_proxied = false
 # MUST be globally unique across all AWS accounts.
 raw_bucket_name  = "sentry-ingest-raw-dev"
 
+# Development default: destroy removes archived objects and database tables.
+# PRODUCTION MUST set this to false before the first apply.
+allow_destroy_data = true
+
 # Optional existing SNS topic for CloudWatch alarm/OK notifications.
 alarm_sns_topic_arn = ""
 s3_object_count_alarm_threshold = 100000

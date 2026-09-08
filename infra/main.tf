@@ -65,8 +65,9 @@ locals {
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "raw" {
-  bucket = var.raw_bucket_name
-  tags   = local.common_tags
+  bucket        = var.raw_bucket_name
+  force_destroy = var.allow_destroy_data
+  tags          = local.common_tags
 }
 
 resource "aws_s3_bucket_versioning" "raw" {
@@ -120,9 +121,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "raw" {
 # ---------------------------------------------------------------------------
 
 resource "aws_dynamodb_table" "projects" {
-  name         = "${local.name_prefix}-projects"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "project_id"
+  name                        = "${local.name_prefix}-projects"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "project_id"
+  deletion_protection_enabled = !var.allow_destroy_data
 
   attribute {
     name = "project_id"
@@ -133,10 +135,11 @@ resource "aws_dynamodb_table" "projects" {
 }
 
 resource "aws_dynamodb_table" "events" {
-  name         = "${local.name_prefix}-events"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "project_id"
-  range_key    = "event_id"
+  name                        = "${local.name_prefix}-events"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "project_id"
+  range_key                   = "event_id"
+  deletion_protection_enabled = !var.allow_destroy_data
 
   attribute {
     name = "project_id"
@@ -250,7 +253,8 @@ resource "aws_lambda_function" "main" {
   memory_size   = each.value.memory_size
   description   = each.value.description
 
-  filename = each.value.zip_path
+  filename         = each.value.zip_path
+  source_code_hash = filebase64sha256(each.value.zip_path)
 
   environment {
     variables = each.value.env_vars
@@ -266,7 +270,7 @@ resource "aws_lambda_permission" "api_gateway" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.main[each.value.lambda].function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.main.execution_arn}/*/${each.value.http}/${each.key}"
+  source_arn    = "${aws_api_gateway_rest_api.main.execution_arn}/*/${each.value.http}/api/*/${each.key}"
 }
 
 # ---------------------------------------------------------------------------
@@ -385,6 +389,8 @@ resource "aws_api_gateway_method_response" "main" {
   resource_id = local.route_resource_ids[each.value.resource]
   http_method = each.value.http
   status_code = "200"
+
+  depends_on = [aws_api_gateway_method.main]
 }
 
 resource "aws_api_gateway_integration" "main" {
@@ -396,6 +402,8 @@ resource "aws_api_gateway_integration" "main" {
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
   uri                     = aws_lambda_function.main[each.value.lambda].invoke_arn
+
+  depends_on = [aws_api_gateway_method.main]
 }
 
 # --- CORS preflight: OPTIONS mock on every route ---
@@ -422,6 +430,9 @@ resource "aws_api_gateway_method_response" "options" {
     "method.response.header.Access-Control-Allow-Methods" = true
     "method.response.header.Access-Control-Allow-Origin"  = true
   }
+
+
+  depends_on = [aws_api_gateway_method.options]
 }
 
 resource "aws_api_gateway_integration" "options" {
@@ -435,6 +446,9 @@ resource "aws_api_gateway_integration" "options" {
   request_templates = {
     "application/json" = "{\"statusCode\": 200}"
   }
+
+
+  depends_on = [aws_api_gateway_method.options]
 }
 
 resource "aws_api_gateway_integration_response" "options" {
@@ -450,6 +464,12 @@ resource "aws_api_gateway_integration_response" "options" {
     "method.response.header.Access-Control-Allow-Methods" = "'POST, OPTIONS'"
     "method.response.header.Access-Control-Allow-Origin"  = "'*'"
   }
+
+
+  depends_on = [
+    aws_api_gateway_integration.options,
+    aws_api_gateway_method_response.options,
+  ]
 }
 
 # --- Gateway responses: throttled/quota-exceeded must surface 429 + Retry-After ---
@@ -460,7 +480,7 @@ resource "aws_api_gateway_gateway_response" "throttled" {
   status_code   = "429"
 
   response_parameters = {
-    "gatewayresponse.header.Retry-After"                 = "60"
+    "gatewayresponse.header.Retry-After"                 = "'60'"
     "gatewayresponse.header.Access-Control-Allow-Origin" = "'*'"
   }
 
@@ -475,7 +495,7 @@ resource "aws_api_gateway_gateway_response" "quota_exceeded" {
   status_code   = "429"
 
   response_parameters = {
-    "gatewayresponse.header.Retry-After"                 = "60"
+    "gatewayresponse.header.Retry-After"                 = "'60'"
     "gatewayresponse.header.Access-Control-Allow-Origin" = "'*'"
   }
 
@@ -491,13 +511,27 @@ resource "aws_api_gateway_deployment" "main" {
 
   triggers = {
     redeployment = sha1(jsonencode({
-      rest_api = aws_api_gateway_rest_api.main.id
-      methods  = [for m in aws_api_gateway_method.main : m.id]
-      opts     = [for m in aws_api_gateway_method.options : m.id]
-      integs   = [for i in aws_api_gateway_integration.main : i.id]
-      oints    = [for i in aws_api_gateway_integration.options : i.id]
+      rest_api              = aws_api_gateway_rest_api.main.id
+      methods               = [for m in aws_api_gateway_method.main : m.id]
+      opts                  = [for m in aws_api_gateway_method.options : m.id]
+      integs                = [for i in aws_api_gateway_integration.main : i.id]
+      oints                 = [for i in aws_api_gateway_integration.options : i.id]
+      method_responses      = [for r in aws_api_gateway_method_response.main : r.id]
+      option_responses      = [for r in aws_api_gateway_method_response.options : r.id]
+      integration_responses = [for r in aws_api_gateway_integration_response.options : r.id]
+      gateway_responses = [
+        aws_api_gateway_gateway_response.throttled.id,
+        aws_api_gateway_gateway_response.quota_exceeded.id,
+      ]
     }))
   }
+
+  depends_on = [
+    aws_api_gateway_integration.main,
+    aws_api_gateway_integration_response.options,
+    aws_api_gateway_method_response.main,
+    aws_api_gateway_method_response.options,
+  ]
 
   lifecycle {
     create_before_destroy = true
@@ -661,23 +695,16 @@ resource "aws_iam_role" "api_gw_logs" {
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "api_gw_logs" {
-  name = "${local.name_prefix}-apigw-logs-policy"
-  role = aws_iam_role.api_gw_logs.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-      Resource = ["${aws_cloudwatch_log_group.api_gw.arn}:*"]
-    }]
-  })
+resource "aws_iam_role_policy_attachment" "api_gw_logs" {
+  role       = aws_iam_role.api_gw_logs.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
 }
 
 # Account-level CloudWatch role for API Gateway logging (one per account).
 resource "aws_api_gateway_account" "main" {
   cloudwatch_role_arn = aws_iam_role.api_gw_logs.arn
+
+  depends_on = [aws_iam_role_policy_attachment.api_gw_logs]
 }
 
 # --- CloudWatch alarms ---

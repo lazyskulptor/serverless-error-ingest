@@ -1,8 +1,46 @@
-# Serverless Sentry-Compatible Error Ingest
+# Serverless Sentry Alternative for AWS
 
-Open-source, serverless error/event collection service that accepts the same
-wire protocol as Sentry. Existing Sentry SDKs (`@sentry/browser` and friends)
-can point their DSN at this project and send events with **only a DSN change**.
+An open-source, self-hosted Sentry-compatible error and application log
+collector for AWS. Keep existing Sentry SDKs (`@sentry/browser` and others),
+change only the DSN, and archive errors and structured SDK events in your own S3
+bucket with searchable metadata in DynamoDB. It runs serverlessly on API Gateway
+and Lambda, without operating a full Sentry or centralized logging stack.
+
+Use it when you need a lightweight Sentry alternative, serverless error
+collector, structured application event archive, or simple log ingestion API
+for development, internal tools, and custom observability pipelines. It
+replaces Sentry's ingestion layer—not the Sentry dashboard, log search UI,
+issue grouping, alerting, performance monitoring, or source-map processing.
+
+## Why this project?
+
+- **Sentry SDK compatible** — existing SDK transport works with a DSN change.
+- **Self-hosted in your AWS account** — raw events stay in private S3 and
+  metadata stays in DynamoDB.
+- **Serverless and low-operations** — no Kubernetes, Kafka, ClickHouse, or
+  always-on application servers.
+- **OpenTofu deployment** — reproducible API Gateway, Lambda, WAF, storage,
+  logging, alarms, DNS, and GitHub OIDC automation.
+- **Collection-focused** — a small foundation for teams building their own
+  error-processing, analytics, retention, or AI workflows.
+- **Useful for application logs** — capture structured logs and exceptions sent
+  through Sentry SDKs without deploying a general-purpose log platform.
+
+If you need a complete error-monitoring product with UI and issue workflows,
+consider self-hosted Sentry, GlitchTip, Bugsink, Highlight, or SigNoz instead.
+
+## Lightweight log collection: where it fits
+
+Many open-source logging tools are excellent but solve a broader problem:
+Loki, OpenSearch, Graylog, Vector, Fluent Bit, and OpenTelemetry Collector
+typically collect logs from hosts, containers, files, or multiple backends.
+They may also require a separate storage and query stack. This project is
+narrower: it accepts Sentry SDK error and structured event traffic directly,
+then persists it on managed AWS services with no always-on collector cluster.
+
+Choose this project for Sentry-compatible application error/log ingestion and
+an S3 archive. Choose a general log platform when you need arbitrary text logs,
+full-text search, dashboards, agents, traces, metrics, or multi-source routing.
 
 ## Architecture
 
@@ -14,7 +52,7 @@ Sentry SDK (any language, DSN pointed at this service)
       - X-Sentry-Auth / DSN public key validation
       - Envelope parser (JSON header line + item lines) / store JSON
       - Schema-normalize event JSON (Sentry event schema)
-      - Write raw envelope/event to S3 (s3://<bucket>/projects/<project>/<date>/<event_id>.envelope)
+      - Write raw envelope/event to S3 (s3://<bucket>/projects/<project>/YYYY-MM-DD/<event_id>.envelope)
       - Write metadata row to DynamoDB (project, event_id, timestamp, level, platform, count, status)
   → 200 OK {"id": "<event_id>"}
 ```
@@ -73,21 +111,26 @@ docs/               COMPATIBILITY.md, ARCHITECTURE.md, QUERY.md, REGISTRATION.md
 1. Install Go 1.24+, `zip`, OpenTofu 1.6+, and the AWS CLI, then run
    `./scripts/build-lambdas.sh` from the repository root.
 2. **Infrastructure**: `cd infra`, copy `terraform.tfvars.example` to
-   `terraform.tfvars`, choose either Route 53 (`dns_provider = "aws"`) or
-   Cloudflare (`dns_provider = "cloudflare"`), then run
-
-For automated production deployment, bootstrap the GitHub OIDC roles under
-`infra/bootstrap/github-oidc` and configure the protected `production`
-environment described in `infra/README.md`. Pull requests plan only; merges to
-`master` apply the reviewed saved plan and run POST/S3/DynamoDB smoke checks.
-   `tofu init && tofu plan && tofu apply`. Leave `domain_name` empty to use the
-   direct API Gateway URL. Cloudflare credentials come from
-   `CLOUDFLARE_API_TOKEN`, never from the tfvars file.
-3. **Register a project**: `cd scripts && go run ./register -project <name>`
+   `terraform.tfvars`, and set a globally unique raw bucket name. Leave
+   `domain_name` empty for the direct API Gateway URL, or configure Route 53
+   (`dns_provider = "aws"`) or Cloudflare (`dns_provider = "cloudflare"`). Run
+   `tofu init && tofu plan && tofu apply`. Cloudflare credentials come from
+   `CLOUDFLARE_API_TOKEN`, never from tfvars.
+   `allow_destroy_data` defaults to `true` for clean development teardown.
+   **Production must set it to `false` before the first apply** or destroy will
+   permanently remove archived events and tables.
+3. **Register a project**: `cd scripts/register && go run . -project <name>
+   -host <api-host>`
    (creates a `projects` table row + DSN public key). See `docs/REGISTRATION.md`.
 4. **Send events**: point a Sentry SDK DSN at
    `https://{public_key}@{api_gateway_host}/{project_id}`. See
-   `examples/browser/` and `docs/COMPATIBILITY.md`.
+    `examples/browser/` and `docs/COMPATIBILITY.md`.
+
+For automated deployment, bootstrap GitHub OIDC under
+`infra/bootstrap/github-oidc`, configure the protected environment described in
+`infra/README.md`, and publish a GitHub Release. CI validates the exact commit
+and stores its Lambda artifact; the Release workflow verifies that artifact,
+applies a saved OpenTofu plan, and checks POST/S3/DynamoDB persistence.
 
 ## License
 

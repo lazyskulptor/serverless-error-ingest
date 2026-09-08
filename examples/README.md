@@ -51,7 +51,7 @@ Sentry.init({
    - `POST /api/my-app/envelope/` → `200` with body `{"id": "..."}` (not `202`)
    - one `event` row appears in DynamoDB `sentry-ingest-events`
    - an envelope object appears in S3
-     `sentry-ingest-raw-*/projects/my-app/<date>/<event-id>.envelope`
+     `sentry-ingest-raw-*/projects/my-app/YYYY-MM-DD/<event-id>.envelope`
 
 ## Verified SDK versions
 
