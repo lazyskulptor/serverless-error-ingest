@@ -14,7 +14,7 @@ Sentry SDK (any language, DSN pointed at this service)
       - X-Sentry-Auth / DSN public key validation
       - Envelope parser (JSON header line + item lines) / store JSON
       - Schema-normalize event JSON (Sentry event schema)
-      - Write raw envelope/event to S3 (s3://<bucket>/projects/<project>/<date>/<event_id>.envelope)
+      - Write raw envelope/event to S3 (s3://<bucket>/projects/<project>/YYYY-MM-DD/<event_id>.envelope)
       - Write metadata row to DynamoDB (project, event_id, timestamp, level, platform, count, status)
   → 200 OK {"id": "<event_id>"}
 ```
@@ -73,21 +73,23 @@ docs/               COMPATIBILITY.md, ARCHITECTURE.md, QUERY.md, REGISTRATION.md
 1. Install Go 1.24+, `zip`, OpenTofu 1.6+, and the AWS CLI, then run
    `./scripts/build-lambdas.sh` from the repository root.
 2. **Infrastructure**: `cd infra`, copy `terraform.tfvars.example` to
-   `terraform.tfvars`, choose either Route 53 (`dns_provider = "aws"`) or
-   Cloudflare (`dns_provider = "cloudflare"`), then run
-
-For automated production deployment, bootstrap the GitHub OIDC roles under
-`infra/bootstrap/github-oidc` and configure the protected `production`
-environment described in `infra/README.md`. Pull requests plan only; merges to
-`master` apply the reviewed saved plan and run POST/S3/DynamoDB smoke checks.
-   `tofu init && tofu plan && tofu apply`. Leave `domain_name` empty to use the
-   direct API Gateway URL. Cloudflare credentials come from
-   `CLOUDFLARE_API_TOKEN`, never from the tfvars file.
-3. **Register a project**: `cd scripts && go run ./register -project <name>`
+   `terraform.tfvars`, and set a globally unique raw bucket name. Leave
+   `domain_name` empty for the direct API Gateway URL, or configure Route 53
+   (`dns_provider = "aws"`) or Cloudflare (`dns_provider = "cloudflare"`). Run
+   `tofu init && tofu plan && tofu apply`. Cloudflare credentials come from
+   `CLOUDFLARE_API_TOKEN`, never from tfvars.
+3. **Register a project**: `cd scripts/register && go run . -project <name>
+   -host <api-host>`
    (creates a `projects` table row + DSN public key). See `docs/REGISTRATION.md`.
 4. **Send events**: point a Sentry SDK DSN at
    `https://{public_key}@{api_gateway_host}/{project_id}`. See
-   `examples/browser/` and `docs/COMPATIBILITY.md`.
+    `examples/browser/` and `docs/COMPATIBILITY.md`.
+
+For automated deployment, bootstrap GitHub OIDC under
+`infra/bootstrap/github-oidc`, configure the protected environment described in
+`infra/README.md`, and publish a GitHub Release. CI validates the exact commit
+and stores its Lambda artifact; the Release workflow verifies that artifact,
+applies a saved OpenTofu plan, and checks POST/S3/DynamoDB persistence.
 
 ## License
 

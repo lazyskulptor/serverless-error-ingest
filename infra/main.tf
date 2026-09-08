@@ -677,20 +677,6 @@ resource "aws_iam_role" "api_gw_logs" {
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "api_gw_logs" {
-  name = "${local.name_prefix}-apigw-logs-policy"
-  role = aws_iam_role.api_gw_logs.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-      Resource = ["arn:aws:logs:${var.region}:*:*"]
-    }]
-  })
-}
-
 resource "aws_iam_role_policy_attachment" "api_gw_logs" {
   role       = aws_iam_role.api_gw_logs.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
@@ -700,10 +686,7 @@ resource "aws_iam_role_policy_attachment" "api_gw_logs" {
 resource "aws_api_gateway_account" "main" {
   cloudwatch_role_arn = aws_iam_role.api_gw_logs.arn
 
-  depends_on = [
-    aws_iam_role_policy.api_gw_logs,
-    aws_iam_role_policy_attachment.api_gw_logs,
-  ]
+  depends_on = [aws_iam_role_policy_attachment.api_gw_logs]
 }
 
 # --- CloudWatch alarms ---

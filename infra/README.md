@@ -172,9 +172,9 @@ go run . -project my-app -region ap-northeast-2
 
 See `docs/REGISTRATION.md` for the full DSN format handed to clients.
 
-## GitHub Actions deployment
+## GitHub Actions Release deployment
 
-The `Deploy production` workflow uses GitHub OIDC; never configure repository
+The `Deploy release` workflow uses GitHub OIDC; never configure repository
 AWS access-key secrets. Bootstrap the roles once from
 `infra/bootstrap/github-oidc`, then create a protected GitHub environment named
 `production` with required reviewers.
@@ -182,9 +182,9 @@ AWS access-key secrets. Bootstrap the roles once from
 Configure these repository/environment variables:
 
 - `AWS_REGION`, `AWS_ACCOUNT_ID`
-- `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN`
+- `AWS_APPLY_ROLE_ARN`
 - `TF_STATE_BUCKET`, `TF_STATE_LOCK_TABLE`, `TF_STATE_KEY`
-- `RAW_BUCKET_NAME`, `EVENTS_TABLE`, `PUBLIC_BASE_URL`
+- `RAW_BUCKET_NAME`, `DEPLOY_ENVIRONMENT` (defaults to `production`)
 - `DOMAIN_NAME`, `DNS_PROVIDER`, `ROUTE53_ZONE_ID`, `CLOUDFLARE_ZONE_ID`
 
 For Cloudflare DNS, add protected environment secret
@@ -193,13 +193,37 @@ secrets `SMOKE_PROJECT_ID` and `SMOKE_PUBLIC_KEY` after registering a dedicated
 smoke project once. Registration is deliberately not part of deployment because
 it generates a new key.
 
-Same-repository pull requests assume the plan-only role and plan against remote
-state. Fork pull requests receive only the offline CI checks. A `master` push or
-manual dispatch waits for environment approval, creates a saved plan, applies
-that exact artifact, and verifies POST, S3, and DynamoDB persistence.
+Pushes and pull requests run credential-free CI. A successful push CI run builds
+the Lambda ZIP once and uploads `lambda-<commit-sha>` with a SHA-256 checksum for
+30 days. Publishing a Release resolves its tag to an immutable commit, requires
+a successful push CI run for exactly that commit, verifies the corresponding
+artifact, waits for environment approval, creates and applies a saved plan, and
+verifies POST, S3, and DynamoDB persistence. It never falls back to an artifact
+from the latest branch. If the exact artifact expired, rerun CI for that commit
+or release a fresh reviewed commit.
+
+For the first deployment only, manually dispatch the published tag with
+`skip_smoke=true`, read the outputs, register a dedicated smoke project, and add
+`SMOKE_PROJECT_ID` and `SMOKE_PUBLIC_KEY`. Every normal Release must run smoke.
+The smoke checks the flat `projects/<project>/YYYY-MM-DD/<event>.envelope` key.
+
+The API Gateway regional custom-domain target is only a DNS CNAME target; it is
+not the direct invoke URL. For DNS-independent diagnosis use the complete
+`api_gateway_url` output, including its stage path.
 
 Require the CI and deploy-plan checks in branch protection. Workflow
 concurrency and the DynamoDB state lock prevent overlapping applies.
+
+### Existing resources and partial applies
+
+Before retrying a failed first deployment, run `tofu state list` and compare it
+with AWS. Import existing resources instead of deleting durable data, for
+example `tofu import aws_dynamodb_table.projects <table-name>`, `tofu import
+aws_dynamodb_table.events <table-name>`, or `tofu import aws_iam_role.ingest
+<role-name>`. API Gateway account logging is account/region-wide; if another
+stack owns it, choose one owner rather than creating competing settings. After
+imports, rerun `tofu plan` and review every create/update/delete action. Never
+delete the raw bucket or event tables as generic recovery.
 
 ### Rollback
 

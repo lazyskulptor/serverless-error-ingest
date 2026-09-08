@@ -18,7 +18,7 @@ Sentry SDK (any language, DSN pointed at this service)
       - X-Sentry-Auth / DSN public key validation
       - Envelope parser (JSON header line + item lines) / store JSON
       - Schema-normalize event JSON (Sentry event schema)
-      - Write raw envelope/event to S3 (s3://<bucket>/projects/<project>/<date>/<event_id>.envelope)
+      - Write raw envelope/event to S3 (s3://<bucket>/projects/<project>/YYYY-MM-DD/<event_id>.envelope)
       - Write metadata row to DynamoDB (project, event_id, timestamp, level, platform, count, status)
   → 200 OK {"id": "<event_id>"}
 ```
@@ -69,8 +69,11 @@ Sentry SDK (any language, DSN pointed at this service)
 
 - Private, versioned bucket `log-collector-raw` (configurable).
 - Raw objects stored at
-  `projects/<project_id>/<date>/<event_id>/<item_type>.json` and the full
-  envelope at `projects/<project_id>/<date>/<event_id>.envelope`.
+  `projects/<project_id>/YYYY-MM-DD/<event_id>/items/<sequence>-<item_type>` and
+  the full envelope at
+  `projects/<project_id>/YYYY-MM-DD/<event_id>.envelope`. Deployments upgraded
+  from older versions may retain historical `YYYY/MM/DD` keys until lifecycle
+  expiration; existing objects are not migrated.
 - **Storage-key safety**: the client-supplied `event_id` is validated against
   a hex charset (`^[a-fA-F0-9]{1,64}$`) before it is ever used in an S3 key
   or DynamoDB sort key; a value that fails validation is replaced with a
