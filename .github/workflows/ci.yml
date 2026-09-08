@@ -70,6 +70,10 @@ jobs:
           go-version: "1.24.x"
           cache-dependency-path: lambda/ingest/go.sum
 
+      - name: Build Lambda artifact for validation
+        working-directory: .
+        run: ./scripts/build-lambdas.sh
+
       - name: Init
         run: tofu init -backend=false
 
