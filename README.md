@@ -1,15 +1,16 @@
 # Serverless Sentry Alternative for AWS
 
-An open-source, self-hosted Sentry-compatible error ingestion backend for AWS.
-Keep existing Sentry SDKs (`@sentry/browser` and others), change only the DSN,
-and archive errors in your own S3 bucket with searchable metadata in DynamoDB.
-It runs serverlessly on API Gateway and Lambda, without operating a full Sentry
-installation.
+An open-source, self-hosted Sentry-compatible error and application log
+collector for AWS. Keep existing Sentry SDKs (`@sentry/browser` and others),
+change only the DSN, and archive errors and structured SDK events in your own S3
+bucket with searchable metadata in DynamoDB. It runs serverlessly on API Gateway
+and Lambda, without operating a full Sentry or centralized logging stack.
 
-Use it when you need a lightweight Sentry alternative for error collection,
-data ownership, development, internal tools, or custom observability pipelines.
-It replaces Sentry's ingestion layer—not the Sentry dashboard, issue grouping,
-alerting, performance monitoring, or source-map processing.
+Use it when you need a lightweight Sentry alternative, serverless error
+collector, structured application event archive, or simple log ingestion API
+for development, internal tools, and custom observability pipelines. It
+replaces Sentry's ingestion layer—not the Sentry dashboard, log search UI,
+issue grouping, alerting, performance monitoring, or source-map processing.
 
 ## Why this project?
 
@@ -22,9 +23,24 @@ alerting, performance monitoring, or source-map processing.
   logging, alarms, DNS, and GitHub OIDC automation.
 - **Collection-focused** — a small foundation for teams building their own
   error-processing, analytics, retention, or AI workflows.
+- **Useful for application logs** — capture structured logs and exceptions sent
+  through Sentry SDKs without deploying a general-purpose log platform.
 
 If you need a complete error-monitoring product with UI and issue workflows,
 consider self-hosted Sentry, GlitchTip, Bugsink, Highlight, or SigNoz instead.
+
+## Lightweight log collection: where it fits
+
+Many open-source logging tools are excellent but solve a broader problem:
+Loki, OpenSearch, Graylog, Vector, Fluent Bit, and OpenTelemetry Collector
+typically collect logs from hosts, containers, files, or multiple backends.
+They may also require a separate storage and query stack. This project is
+narrower: it accepts Sentry SDK error and structured event traffic directly,
+then persists it on managed AWS services with no always-on collector cluster.
+
+Choose this project for Sentry-compatible application error/log ingestion and
+an S3 archive. Choose a general log platform when you need arbitrary text logs,
+full-text search, dashboards, agents, traces, metrics, or multi-source routing.
 
 ## Architecture
 
